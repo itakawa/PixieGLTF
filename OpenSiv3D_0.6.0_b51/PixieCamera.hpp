@@ -158,7 +158,6 @@ namespace s3d
 		[[nodiscard]]
 		Float2 worldToScreenPoint(const Float3& pos) const noexcept
 		{
-//			Float3 v = SIMD::Vector3TransformCoord(SIMD_Float4(pos, 0.0f), m_viewProj).xyz();//4.3
 			Float3 v = SIMD_Float4{ DirectX::XMVector3TransformCoord(SIMD_Float4{ pos, 0.0f }, m_viewProj) }.xyz();
 			v.x += 1.0f;
 			v.y += 1.0f;
@@ -183,12 +182,6 @@ namespace s3d
 			v.x -= 1.0f;
 			v.y -= 1.0f;
 			v.y *= -1.0f;
-
-//			const __m128 worldPos = SIMD::Vector3TransformCoord(SIMD_Float4(v, 0.0f), m_invViewProj);
-//			Float3 result;
-//			SIMD::StoreFloat3(&result, worldPos);
-//			return result;
-
 			const SIMD_Float4 worldPos = DirectX::XMVector3TransformCoord(SIMD_Float4{ v, 0.0f }, m_invViewProj);
 			return worldPos.xyz();
 		}
@@ -196,9 +189,7 @@ namespace s3d
 		[[nodiscard]]
 		Ray screenToRay(const Vec2& pos) const noexcept
 		{
-//			const Vec3 rayEnd = screenToWorldPoint(pos, 0.9f);	//4.3
 			const Vec3 rayEnd = screenToWorldPoint(pos, 0.000005f);
-	
 			return Ray(m_eyePosition, (rayEnd - m_eyePosition).normalized());
 		}
 
@@ -235,11 +226,6 @@ namespace s3d
 
 			const double fov			= (1.0 / std::tan(m_verticalFOV * 0.5));
 			const double aspectRatio	= static_cast<double>(m_sceneRect.w) / m_sceneRect.h;
-//			m_proj = Mat4x4::PerspectiveFovLH_ZO(fov, aspectRatio, nearClip, farClip);//4.3
-
-//			const double fov			= static_cast<double>(m_verticalFOV);
-//			const double aspectRatio	= static_cast<double>(m_sceneRect.w) / m_sceneRect.h;
-
 			constexpr float e = 0.000001f;
 
 			m_proj = Mat4x4{
@@ -248,12 +234,6 @@ namespace s3d
 				                   0.0f, 0.0f,                       e,                    1.0f,
 				                   0.0f, 0.0f, static_cast<float>(m_nearClip * (1.0 - e)), 0.0f
 			};
-
-//			m_proj = DirectX::XMMatrixPerspectiveFovLH( fov,aspectRatio,e,100000);
-
-
-
-
 		}
 			
 
@@ -262,7 +242,6 @@ namespace s3d
 			const SIMD_Float4 eyePosition(m_eyePosition, 0.0f);
 			const SIMD_Float4 focusPosition(m_focusPosition, 0.0f);
 			const SIMD_Float4 upDirection(m_upDirection, 0.0f);
-//			m_view = Mat4x4::LookAtLH(eyePosition, focusPosition, upDirection);	//4.3
 			m_view = DirectX::XMMatrixLookAtLH(eyePosition, focusPosition, upDirection);
 
 		}
@@ -287,16 +266,6 @@ namespace s3d
 
 
 // from SivBasicCamera3D
-
-
-
-
-
-
-
-
-
-
 
 
 		PixieCamera& setEyePosition( const Vec3& eyePosition ) noexcept

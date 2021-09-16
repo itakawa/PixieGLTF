@@ -1,6 +1,7 @@
 ﻿# include <Siv3D.hpp> // OpenSiv3D v0.6
 # include <Siv3D/EngineLog.hpp>
 
+
 # include "Timeline3.hpp"
 # include "PixieGLTF.hpp"
 # include "PixieCamera.hpp"
@@ -9,6 +10,7 @@
 # include <omp.h>
 # include <algorithm>
 # include <execution>
+#include <thread>
 
 enum IDAREA {  M_RELEASE, 
                M_ACT, M_EYE, M_FOCUS, 
@@ -22,7 +24,7 @@ struct GRABSTATE
     uint32 trackNo;		//トラック番号の識別用
     uint32 lineNo;		//ライン番号の識別用
     uint32 markerNo;	//マーカー番号の識別用
-    Float3 prevTra;     //マーカー3D座標
+    Float3 prevPos;     //マーカー3D座標
 } ;
 
 GRABSTATE grabState { M_RELEASE,0 };      //テスト(パラメータ)初期化
@@ -39,7 +41,7 @@ void InitGUI()
 
 //マーカー操作
 template <typename V> 
-V guiDrag(const PixieCamera &cam, const OBB &obb, const String &code, RectF &rectgui,GRABSTATE &grabstate, IDAREA garea, 
+V guiDrag(const PixieCamera &cam, const OrientedBox &ob, const String &code, RectF &rectgui,GRABSTATE &grabstate, IDAREA garea, 
           ColorF activecolor,ColorF inactivecolor, V pos3d )
 {
     const Font &iconM = FontAsset(U"iconM");
@@ -52,7 +54,7 @@ V guiDrag(const PixieCamera &cam, const OBB &obb, const String &code, RectF &rec
         rectgui.x = pos2d.x;
         rectgui.y = pos2d.y;
         const Ray mouseRay = cam.screenToRay(pos2d);
-	    if (const auto depth = mouseRay.intersects(obb.getBox()))//衝突あり
+	    if (const auto depth = mouseRay.intersects(ob))//衝突あり
 	    {
 		    Cursor::RequestStyle(CursorStyle::Hand);
             Vec3 pos = mouseRay.point_at(*depth);
@@ -81,7 +83,7 @@ Vec3 guiTrack(const Font &font,const String &text, Rect &rectgui,GRABSTATE &grab
 //GLTFメッシュ初期化
 
 PixieGLTF meshArrow, meshXZ, meshXY, meshYZ, meshCam, meshGnd, meshStd, meshMarkA, meshMarkS,
-          meshMarkF, meshT19, meshTokyo, meshAtami, meshSP, meshVRM;
+          meshMarkF, meshSP, meshVRM, meshGrid;
 
 //可動ボーン
 int32 boneHead_01 = -1 ;
@@ -109,15 +111,16 @@ void InitGltf()
 //	gltfAtami = PixieGLTF(U"atami.glb",Float3{ 5, 0, 5 }, Float3{ 10, 10, 10 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
 //	gltfVRM =   PixieGLTF(U"Sinobu.011b.vrm", Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
 
+	meshGrid =  PixieGLTF(U"Grid.glb", Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
 	meshSP =    PixieGLTF(U"MarkSP.glb", Float3{ 0, 0, 0 }, Float3{ 5, 5, 5 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
 	meshArrow = PixieGLTF(U"Arrow.glb", Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
-    meshXZ =    PixieGLTF(U"XZ.glb", Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
+
+	meshXZ =    PixieGLTF(U"XZ.glb", Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0,180, 0 }, Float3{ 0, 0, 0 });
     meshXY =    PixieGLTF(U"XY.glb", Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
     meshYZ =    PixieGLTF(U"YZ.glb", Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
-    meshCam =   PixieGLTF(U"Camera.glb", Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
-//    meshGnd =   PixieGLTF(U"Ground.004g.glb", Float3{ 0, 0, 0 }, Float3{ 100, 100, 100 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
+
+	meshCam =   PixieGLTF(U"Camera.glb", Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
     meshGnd =   PixieGLTF(U"TF2.002.glb", Float3{ 40, 0, -50 }, Float3{ 10, 10, 10 }, Float3{ 0, 90, 0 }, Float3{ 0, 0, 0 });
-//    meshStd =   PixieGLTF(U"Stand.005s.glb",  Float3{ 0, 0, 0 }, Float3{ 100, 100, 100 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
     meshMarkA = PixieGLTF(U"Sinobu.016A860.glb",Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
     meshMarkS = PixieGLTF(U"Sinobu.012.glb",Float3{ 2, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
     meshMarkF = PixieGLTF(U"Triangle.glb",Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
@@ -127,43 +130,80 @@ void InitGltf()
 //	meshVRM =   PixieGLTF(U"Sinobu.012.glb", Float3{ 0, 100, 0 }, Float3{ 20, 20, 20 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
 
 	bool OBBDEBUG = true;
-#pragma omp parallel sections	//このOMPは無効
+//        gltfTokyo.initModel(MODELTYPE::MODELNOA); 
+//        gltfT19.initModel( MODELTYPE::MODELANI,200 );      //60fpsが速度100％
+//        gltfAtami.initModel( MODELTYPE::MODELNOA ); 
+
+MillisecClock ms0;
+#if 0  //順次処理
+		meshGrid.initModel(MODELTYPE::MODELNOA); 
+		meshArrow.initModel(MODELTYPE::MODELNOA); 
+		meshSP.initModel(MODELTYPE::MODELNOA); 
+		meshXZ.initModel(MODELTYPE::MODELNOA, OBBDEBUG); 
+		meshXY.initModel(MODELTYPE::MODELNOA, OBBDEBUG); 
+		meshYZ.initModel(MODELTYPE::MODELNOA, OBBDEBUG); 
+		meshCam.initModel(MODELTYPE::MODELNOA);
+		meshGnd.initModel(MODELTYPE::MODELNOA); 
+		meshMarkS.initModel(MODELTYPE::MODELNOA); 
+		meshMarkF.initModel(MODELTYPE::MODELNOA); 
+		meshVRM.initModel(MODELTYPE::MODELVRM); 
+#else	//スレッド並列(少し早い？)
+{
+	const int32 NTHREAD = 11;
+	std::thread th[NTHREAD];
+	th[0] = std::thread { [&] {meshArrow.initModel(MODELTYPE::MODELNOA); } } ;
+	th[1] = std::thread { [&] {meshSP.initModel(MODELTYPE::MODELNOA); } } ;
+	th[2] = std::thread{ [&] {meshXZ.initModel(MODELTYPE::MODELNOA);; } };
+	th[3] = std::thread { [&] {meshXY.initModel(MODELTYPE::MODELNOA); } } ;
+	th[4] = std::thread { [&] {meshYZ.initModel(MODELTYPE::MODELNOA); } } ;
+	th[5] = std::thread { [&] {meshCam.initModel(MODELTYPE::MODELNOA); } } ;
+	th[6] = std::thread { [&] {meshGnd.initModel(MODELTYPE::MODELNOA); } } ;
+	th[7] = std::thread { [&] {meshMarkS.initModel(MODELTYPE::MODELNOA); } } ;
+	th[8] = std::thread { [&] {meshMarkF.initModel(MODELTYPE::MODELNOA); } } ;
+	th[9] = std::thread { [&] {meshVRM.initModel(MODELTYPE::MODELVRM); } } ;
+	th[10]= std::thread { [&] {meshGrid.initModel(MODELTYPE::MODELNOA); } } ;
+	for (int32 i = 0; i < NTHREAD; i++) th[i].join();
+}
+#endif
+LOG_INFO( U"ワーカースレッド処理時間＝{}ms"_fmt(ms0.ms()) ); // ログ出力
+
+
+/*
 	{
-		//#pragma omp section 
-		//        { gltfTokyo.initModel(MODELTYPE::MODELNOA); }
-		//#pragma omp section
-		//        { gltfT19.initModel( MODELTYPE::MODELANI,200 ); }     //60fpsが速度100％
-		//#pragma omp section
-		//        { gltfAtami.initModel( MODELTYPE::MODELNOA ); }
+		//1000個のスタジアム(7万頂点)
+		const auto NUM = 100;
+		static PixieGLTF meshes1[NUM];
+		static PixieGLTF meshes2[NUM];
+		for (auto i = 0; i < NUM; i++) 
+		{
+	        std::string err, warn;
+			bool result;
+			tinygltf::TinyGLTF loader;
+	        meshes1[i] = PixieGLTF(U"TF2.002.glb");
+	        meshes2[i] = PixieGLTF(U"TF2.002.glb");
+			result = loader.LoadBinaryFromFile(&meshes1[i].gltfModel, &err, &warn, "TF2.002.glb");
+			if (result == false)
+				LOG_INFO(U"LOADエラー");
+			result = loader.LoadBinaryFromFile(&meshes2[i].gltfModel, &err, &warn, "TF2.002.glb");
+			if (result == false)
+				LOG_INFO(U"LOADエラー");
+		}
 
-#pragma omp section 
-		{ meshArrow.initModel(MODELTYPE::MODELNOA); }
-#pragma omp section 
-		{ meshSP.initModel(MODELTYPE::MODELNOA); }
-#pragma omp section 
-		{ meshXZ.initModel(MODELTYPE::MODELNOA, OBBDEBUG); }
-#pragma omp section 
-		{ meshXY.initModel(MODELTYPE::MODELNOA, OBBDEBUG); }
-#pragma omp section 
-		{ meshYZ.initModel(MODELTYPE::MODELNOA, OBBDEBUG); }
-#pragma omp section 
-		{ meshCam.initModel(MODELTYPE::MODELNOA); }
-#pragma omp section 
-		{ meshGnd.initModel(MODELTYPE::MODELNOA); }
-#pragma omp section 
-		{ meshStd.initModel(MODELTYPE::MODELNOA); }
+		std::thread threads[NUM];
+		MillisecClock ms0;
+		for (auto i = 0; i < NUM; i++) threads[i] = std::thread{ [&] {meshes1[i].gltfSetupNOA(); } };
+		for (auto i = 0; i < NUM; i++) threads[i].join();
+		ms0.log(); // 経過時間ログ出力
 
-//#pragma omp section 
-//		{ meshMarkS.initModel(MODELTYPE::MODELNOA); }
-#pragma omp section
-		{ meshMarkF.initModel(MODELTYPE::MODELNOA); }
+		MillisecClock ms1;
+		for (auto i = 0; i < NUM; i++) meshes2[i].gltfSetupNOA(); 
+		ms1.log(); // 経過時間ログ出力
+	}
+*/
 
-#pragma omp section
-		{ meshVRM.initModel(MODELTYPE::MODELVRM); }
-    }
 
-//アニメは内部でOMP使う
-	meshMarkA.initModel(MODELTYPE::MODELANI, false, 860, 0); 
+//アニメ生成は内部でOMP使う
+//	std::thread th = std::thread{ [&] {meshMarkA.initModel(MODELTYPE::MODELANI, false, 860, 0); } };	th.join();
 
 	boneHead_01 = meshVRM.gltfGetJoint( U"Head_01" );
 	boneNeck_01 = meshVRM.gltfGetJoint( U"Neck_01" );
@@ -366,15 +406,11 @@ void drawPosline(PixieCamera& cam, Timeline& timeline, uint32 trackno, uint32 li
 }
 
 // 描画
-void Draw( /*MSRenderTexture &rt ,*/const PixieCamera &cam, Timeline &timeline )
+void Draw( const PixieCamera &cam, Timeline &timeline )
 {
-//    rt.clear(ColorF{ 0.8, 0.9, 1.0, 1.0 });	// RTをクリア
-//    {
-//        ScopedRenderTarget2D target(rt);    // 描画対象をRTに
-		const ScopedRenderStates3D sr{ SamplerState::RepeatAniso, RasterizerState::SolidCullFront };
+		const ScopedRenderStates3D sr3{ SamplerState::RepeatAniso, RasterizerState::SolidCullFront };
 
         meshGnd.drawMesh();
-        meshStd.setCamera( cam ).drawMesh();
 
 //        drawGrid( cam );                    // GRIDを描画
 
@@ -382,30 +418,74 @@ void Draw( /*MSRenderTexture &rt ,*/const PixieCamera &cam, Timeline &timeline )
         drawPosline( cameraGUI, timeline, 0, PRB_CAM,  U"\xF0104" );	        //Camera-R
         drawPosline( cameraGUI, timeline, 0, PRB_FOCUS,U"\xF0E96" );            //Focus-R
 
-        meshMarkS.setCamera( cam ).drawMesh();
+//        meshMarkS.drawMesh();
+//        meshMarkF.drawMesh();
 
-        meshMarkF.setCamera( cam ).drawMesh();
-        meshArrow.setCamera( cam ).drawMesh();
-        meshSP.setCamera( cam ).drawMesh();
-        meshXY.setCamera( cam ).drawMesh();
-        meshYZ.setCamera( cam ).drawMesh();
-        meshXZ.setCamera( cam ).drawMesh();
+		//暫定でモデルのカメラにVPを登録→OBBボックス描画(2D)
+		meshArrow.drawMesh();
+        meshSP.drawMesh();
 
-//		meshVRM.setCamera(cam).drawVRM();
+		//Colorの４番目の引数が透明度でないと、違和感すごい
+		const ColorF WHITE(1,1,1,USRCOLOR), RED(1,0.5,0.5,USRCOLOR),
+			                              GREEN(0.5,1,0.5,USRCOLOR),
+			                               BLUE(0.5,0.5,1,USRCOLOR) ;
+        const Ray mouseRay = cam.screenToRay(Cursor::PosF());
 
-//		gltfTokyo.setCamera( cam ).drawMesh();
-//      gltfT19.setCamera( cam ).drawAnime();
-//      gltfT19.nextFrame(0);
-//		gltfAtami.setCamera( cam ).drawMesh();
+		meshXY.setCamera(cam);
+		if (grabState.area == M_XY)
+		{
+			meshGrid.eRot = { 0,90,90 };
+			meshGrid.drawMesh();
+			meshXY.drawMesh(WHITE);
+		}
+		else if (mouseRay.intersects(meshXY.ob)) meshXY.drawMesh(GREEN);
+		else									 meshXY.drawMesh();
 
-//	}
-//    Graphics3D::Flush();					// RTに描画
+		meshYZ.setCamera(cam);
+		if (grabState.area == M_YZ)
+		{
+			meshGrid.eRot = { 90,90,0 };
+			meshGrid.drawMesh();
+			meshYZ.drawMesh(WHITE);
+		}
+		else if (mouseRay.intersects(meshYZ.ob)) meshYZ.drawMesh(BLUE);
+		else									 meshYZ.drawMesh();
 
+		meshXZ.setCamera(cam);
+		if (grabState.area == M_XZ)
+		{
+			meshGrid.eRot = { 0,0,0 };
+			meshGrid.drawMesh();
+			meshXZ.drawMesh(WHITE);
+		}
+		else if( mouseRay.intersects(meshXZ.ob)) meshXZ.drawMesh( RED );
+		else									 meshXZ.drawMesh();
 
-//    Graphics2D::Flush();					// RTに描画
-//	  rt.resolve();							// スムージング
-//	  rt.draw();                            // RTを描画
+		Graphics3D::Flush();		//3Dを明示的に描画すると3D→2Dの順に描画(OBBのBOXは2D描画)
 }
+
+// キーボードショートカット操作
+void updateShortcut(PixieCamera& camera)
+{
+	float speed = 1.01;
+	if (KeyLShift.pressed()) speed *= 5;                    //Shiftで5倍速
+
+	if (KeyW.pressed()) camera.dolly(+speed);
+	if (KeyA.pressed()) camera.trackX(+speed);
+	if (KeyS.pressed()) camera.dolly(-speed);
+	if (KeyD.pressed()) camera.trackX(-speed);
+
+	if (KeyE.pressed()) camera.craneY(+speed);
+	if (KeyX.pressed()) camera.craneY(-speed);
+	if (KeyQ.pressed()) camera.tilt(+speed/100);
+	if (KeyZ.pressed()) camera.tilt(-speed/100);
+
+	if (KeyLeft.pressed()) camera.arcballX(-speed/100);
+	if (KeyRight.pressed()) camera.arcballX(+speed/100);
+	if (KeyUp.pressed())  camera.arcballY(+speed/100);
+	if (KeyDown.pressed()) camera.arcballY(-speed/100);
+}
+
 
 //マウス操作
 void updateMouse( const PixieGLTF &model, Float3 &focuspos, Float4 &eyepos )
@@ -422,20 +502,22 @@ void updateMouse( const PixieGLTF &model, Float3 &focuspos, Float4 &eyepos )
     if ( KeyLControl.pressed() || MouseM.pressed() ) //中ボタンウィール：拡縮
     {
         cameraGUI.dolly( Mouse::Wheel() );
-        cameraGUI.setUpDirection(Float3{0,1,0}).setView();
     }
 
     if ( MouseR.pressed() )                         //右ボタンドラッグ：平行移動
     {
         cameraGUI.trackX(delta.x/10);
         cameraGUI.craneY(delta.y/10);
-        cameraGUI.setUpDirection(Float3{0,1,0}).setView();
+		LOG_INFO(U"CAM_POS:{}"_fmt(cameraGUI.getEyePosition()));
     }
+
+	updateShortcut( cameraGUI );
+	cameraGUI.setUpDirection(Float3{0,1,0}).setView();	//カメラをGraphic3Dのビューに反映
 
     if ( MouseM.down() )                            //中ボタンドラッグ：回転
     {
         const Ray mouseRay = cameraGUI.screenToRay(Cursor::PosF());
-        if (const auto depth = mouseRay.intersects( model.obb.getBox() ))
+        if (const auto depth = mouseRay.intersects( model.ob ))
         {
 		    point3D = mouseRay.point_at(*depth);    //ポイントした3D座標を基点
         }
@@ -492,6 +574,25 @@ void setFacial(int32 morphch, PixieGLTF &pg, int32 mtstate, float speed, Array<f
 
 enum MORPHCH {FACIAL=0,MOUTH=1,EYE=2};
 
+void updateFacial()
+{
+    float morphspd = 1.0;
+	if (Key0.pressed()) setFacial(FACIAL, meshVRM, 0,  morphspd, WEIGHTTRANSITION);
+	if (Key1.pressed()) setFacial(MOUTH,  meshVRM, 1,  morphspd, WEIGHTBLINK);
+	if (Key2.pressed()) setFacial(MOUTH,  meshVRM, 2,  morphspd, WEIGHTBLINK);
+	if (Key3.pressed()) setFacial(EYE,    meshVRM, 3,  morphspd, WEIGHTBLINK);
+	if (Key4.pressed()) setFacial(EYE,    meshVRM, 14, morphspd, WEIGHTBLINK);
+	if (Key5.pressed()) setFacial(FACIAL, meshVRM, 10, morphspd, WEIGHTTRANSITION);
+	if (Key6.pressed()) setFacial(FACIAL, meshVRM, 11, morphspd, WEIGHTTRANSITION);
+	if (Key7.pressed()) setFacial(FACIAL, meshVRM, 12, morphspd, WEIGHTTRANSITION);
+	if (Key8.pressed()) setFacial(FACIAL, meshVRM, 8,  morphspd, WEIGHTTRANSITION);
+	if (Key9.pressed()) setFacial(FACIAL, meshVRM, 14, morphspd, WEIGHTTRANSITION);
+
+    //カメラは注視点と視点の組み合わせで座標だけで角度が決まるがロール表現ができない
+    //ロール変化を動画でやると酔うのであまりやらないが、できないのは残念なので、使わないけど入れる必要ある
+    //カメラは注視点と合わせてロール以外の角度を持つので視点の座標をFloat3→Float4として、ｗにロール角を保持
+}
+
 void updateMorph(PixieGLTF &pg)
 {
 	//モデルが持つすべてのモーフィング毎に制御
@@ -523,44 +624,7 @@ void updateMorph(PixieGLTF &pg)
     }
 }
 
-// キーボードショートカット操作
-void updateShortcut(PixieCamera& camera)
-{
-    float speed = 0.01;
-    if (KeyLShift.pressed()) speed *= 5;                    //Shiftで5倍速
-    if (KeyW.pressed()) camera.dolly( +speed );
-    if (KeyA.pressed()) camera.trackX( -speed );
-    if (KeyS.pressed()) camera.dolly( -speed );
-    if (KeyD.pressed()) camera.trackX( +speed );
 
-    if (KeyE.pressed()) camera.craneY( +speed );
-    if (KeyX.pressed()) camera.craneY( -speed );
-    if (KeyQ.pressed()) camera.tilt( +speed );
-    if (KeyZ.pressed()) camera.tilt( -speed );
-
-    if (KeyLeft.pressed()) camera.arcballX( -speed );
-    if (KeyRight.pressed()) camera.arcballX( +speed );
-    if (KeyUp.pressed())  camera.arcballY( -speed );
-    if (KeyDown.pressed()) camera.arcballY( +speed );
-
-
-    float morphspd = 1.0;
-	if (Key0.pressed()) setFacial(FACIAL, meshVRM, 0,  morphspd, WEIGHTTRANSITION);
-	if (Key1.pressed()) setFacial(MOUTH,  meshVRM, 1,  morphspd, WEIGHTBLINK);
-	if (Key2.pressed()) setFacial(MOUTH,  meshVRM, 2,  morphspd, WEIGHTBLINK);
-	if (Key3.pressed()) setFacial(EYE,    meshVRM, 3,  morphspd, WEIGHTBLINK);
-	if (Key4.pressed()) setFacial(EYE,    meshVRM, 14, morphspd, WEIGHTBLINK);
-	if (Key5.pressed()) setFacial(FACIAL, meshVRM, 10, morphspd, WEIGHTTRANSITION);
-	if (Key6.pressed()) setFacial(FACIAL, meshVRM, 11, morphspd, WEIGHTTRANSITION);
-	if (Key7.pressed()) setFacial(FACIAL, meshVRM, 12, morphspd, WEIGHTTRANSITION);
-	if (Key8.pressed()) setFacial(FACIAL, meshVRM, 8,  morphspd, WEIGHTTRANSITION);
-	if (Key9.pressed()) setFacial(FACIAL, meshVRM, 14, morphspd, WEIGHTTRANSITION);
-
-    //カメラは注視点と視点の組み合わせで座標だけで角度が決まるがロール表現ができない
-    //ロール変化を動画でやると酔うのであまりやらないが、できないのは残念なので、使わないけど入れる必要ある
-    //カメラは注視点と合わせてロール以外の角度を持つので視点の座標をFloat3→Float4として、ｗにロール角を保持
-
-}
 
 void updatePosline( const PixieCamera &cam, const PixieGLTF& model, Timeline &timeline, uint32 trackno, uint32 lineno )
 {
@@ -581,16 +645,21 @@ void updatePosline( const PixieCamera &cam, const PixieGLTF& model, Timeline &ti
     	auto &lp = tr.linePoints[ grabState.lineNo ];
 		uint32 &i = grabState.markerNo;
         const Ray mouseRay = cam.screenToRay(Cursor::PosF());
-	    if (const auto depth = mouseRay.intersects(model.obb.getBox()))//衝突あり
+	    if (const auto depth = mouseRay.intersects(model.ob))//衝突あり
 	    {
 		    Cursor::RequestStyle(CursorStyle::Hand);
 		    Float3 pos3 = mouseRay.point_at(*depth);
+
 			lp[i].value[0] = *(uint32 *)&pos3.x;
 			lp[i].value[1] = *(uint32 *)&pos3.y;
 			lp[i].value[2] = *(uint32 *)&pos3.z;
-            LOG_INFO(U"{}"_fmt(model.obb.size));
+            LOG_INFO(U"{}"_fmt(model.ob.size));
             
-            meshArrow.lTra = meshXY.lTra = meshXZ.lTra = meshYZ.lTra = pos3;
+            meshArrow.lPos =
+			meshGrid.lPos =
+			meshXY.lPos =
+			meshXZ.lPos =
+			meshYZ.lPos = pos3;
 
         }
     }
@@ -599,36 +668,71 @@ void updatePosline( const PixieCamera &cam, const PixieGLTF& model, Timeline &ti
     {
 		pointBegin = Cursor::PosF();
         const Ray mouseRay = cam.screenToRay(pointBegin);
-        if (const auto depth = mouseRay.intersects(meshArrow.obb.getBox()))
+        if (const auto depth = mouseRay.intersects(meshArrow.ob))
         {
 			Vec3 ipos = mouseRay.point_at(*depth);
+			meshArrow.camera.setView(meshArrow.lPos, ipos);
 
-			meshArrow.camera.setView(meshArrow.lTra, ipos);
+			nowQ = meshArrow.camera.lookAt( meshArrow.lPos, ipos ) ;
 
-			nowQ = meshArrow.camera.lookAt( meshArrow.lTra, ipos ) ;
-			meshArrow.qRot = meshArrow.qRot * (nowQ*oldQ.inverse());
-			meshXY.qRot = meshYZ.qRot = meshXZ.qRot = meshArrow.qRot;
+			meshArrow.qRot = meshArrow.qRot * (oldQ*nowQ.inverse());
+			meshXY.qRot =
+			meshYZ.qRot =
+			meshXZ.qRot =
+			meshGrid.qRot =
+			meshArrow.qRot;
+
 			oldQ = nowQ ;
 
-//			gltfSP.qRot = gltfSP.camera.lookAt( ipos, gltfArrow.lTra );
-			meshSP.lTra = ipos;
+			meshSP.lPos = ipos;
         }
     }
 
+	//軸選択中
     else if (grabState.area == M_XY || grabState.area == M_XZ || grabState.area == M_YZ )
     {
         const Ray mouseRay = cam.screenToRay(Cursor::PosF());
         Optional<float> depth;
-        if      ( grabState.area == M_XY ) depth = mouseRay.intersects(meshXY.obb.getBox());
-        else if ( grabState.area == M_XZ ) depth = mouseRay.intersects(meshXZ.obb.getBox());
-        else if ( grabState.area == M_YZ ) depth = mouseRay.intersects(meshYZ.obb.getBox());
-        if ( depth )
+		Float3 pos3{0,0,0};
+
+		if (grabState.area == M_XY)//赤
+		{
+			depth = mouseRay.intersects( meshXY.ob.scaled(10,10,1) );
+            pos3 = mouseRay.point_at(*depth);
+			LOG_INFO(U"<XY> OB=org:{} new:{}"_fmt(grabState.prevPos, pos3 ));
+		}
+
+		else if (grabState.area == M_XZ)//緑
+		{
+			depth = mouseRay.intersects( meshXZ.ob.scaled(10,1,10) );
+            pos3 = mouseRay.point_at(*depth);
+			LOG_INFO(U"[XZ] OB=org:{} size:{}"_fmt(grabState.prevPos, pos3));
+		}
+		else if (grabState.area == M_YZ)//青
+		{
+			depth = mouseRay.intersects( meshYZ.ob.scaled(1,10,10) );
+            pos3 = mouseRay.point_at(*depth);
+			LOG_INFO(U"[YZ] OB=org:{} size:{}"_fmt(grabState.prevPos, pos3));
+		}
+
+		if ( depth )
         {
-            Float3 pos3 = mouseRay.point_at(*depth);
-            Float3 delta3 = pos3 - grabState.prevTra;
-            grabState.prevTra = pos3;
-            meshArrow.lTra = meshXY.lTra = meshXZ.lTra = meshYZ.lTra += delta3;
-        }
+			Float3 delta3 = pos3 - grabState.prevPos;
+			grabState.prevPos = pos3;
+
+			meshArrow.lPos =
+			meshXY.lPos =
+			meshXZ.lPos =
+			meshYZ.lPos += delta3;
+
+			meshArrow.ob.moveBy( delta3 );
+			meshXY.ob.moveBy( delta3 );
+			meshXZ.ob.moveBy( delta3 );
+			meshYZ.ob.moveBy( delta3 );
+
+
+///			LOG_INFO(U"meshXY.lPos:{}"_fmt(meshXY.lPos));
+		}
     }
 
     else if (grabState.area == M_RELEASE )    //左ドラッグ開始処理（解放状態であること）
@@ -661,24 +765,26 @@ void updatePosline( const PixieCamera &cam, const PixieGLTF& model, Timeline &ti
 */            }
 
             // 3Dカーソルで左クリック軸選択
-            if (MouseL.down())
+            if (MouseL.down() && grabState.area == M_RELEASE )
             {
                 const Ray mouseRay = cam.screenToRay(Cursor::PosF());
-                if (const auto depth = mouseRay.intersects(meshXY.obb.getBox()))
+
+				if (const auto depth = mouseRay.intersects(meshXY.ob))
                 {
-                    grabState.prevTra = mouseRay.point_at(*depth);
+                    grabState.prevPos = mouseRay.point_at(*depth);
                     grabState.area = M_XY;
                 }
-                else if (const auto depth = mouseRay.intersects(meshXZ.obb.getBox()))
+                else if (const auto depth = mouseRay.intersects(meshXZ.ob))
                 {
-                    grabState.prevTra = mouseRay.point_at(*depth);
+                    grabState.prevPos = mouseRay.point_at(*depth);
                     grabState.area = M_XZ;
                 }
-                else if (const auto depth = mouseRay.intersects(meshYZ.obb.getBox()))
+                else if (const auto depth = mouseRay.intersects(meshYZ.ob))
                 {
-                    grabState.prevTra = mouseRay.point_at(*depth);
+                    grabState.prevPos = mouseRay.point_at(*depth);
                     grabState.area = M_YZ;
                 }
+				meshGrid.lPos = grabState.prevPos;
             }
 
             // 3Dカーソルで中クリックPAN回転
@@ -686,16 +792,13 @@ void updatePosline( const PixieCamera &cam, const PixieGLTF& model, Timeline &ti
             {
 				pointBegin = Cursor::PosF();
                 const Ray mouseRay = cam.screenToRay(pointBegin);
-                if (const auto depth = mouseRay.intersects(meshArrow.obb.getBox()))
+                if (const auto depth = mouseRay.intersects(meshArrow.ob))
                 {
 					Vec3 ipos = mouseRay.point_at(*depth);
 
-//					gltfArrow.camera.setView(gltfArrow.lTra, ipos);
-					oldQ = meshArrow.camera.lookAt( meshArrow.lTra, ipos ) ;	//Mボタン押下時のqRotを保存
+					oldQ = meshArrow.camera.lookAt( meshArrow.lPos, ipos ) ;	//Mボタン押下時のqRotを保存
 
-//					gltfSP.qRot = gltfSP.camera.lookAt( ipos, gltfArrow.lTra );
-					meshSP.lTra = ipos;
-
+					meshSP.lPos = ipos;
 
 					grabState.area = M_ARROW;
                 }
@@ -709,22 +812,21 @@ void updatePosline( const PixieCamera &cam, const PixieGLTF& model, Timeline &ti
 void Update(Timeline& timeline)
 {
     cameraR.setEyePosition(eyePosR.xyz()).setFocusPosition(focusPosR);
-    updateShortcut(cameraR);
+//    updateShortcut(cameraR);
     eyePosR = Float4 {cameraR.getEyePosition(), eyePosR.w };
     focusPosR = cameraR.getFocusPosition();
 
-    updateMouse( meshGnd, focusPosGUI, eyePosGUI );
+//    cameraGUI.setEyePosition(eyePosGUI.xyz()).setFocusPosition(focusPosGUI);
+ //   updateShortcut( cameraGUI );
+//    updateMouse( meshGnd, focusPosGUI, eyePosGUI );
+ //   eyePosGUI = Float4 {cameraGUI.getEyePosition(), eyePosGUI.w };
+//    focusPosGUI = cameraGUI.getFocusPosition();
 
-    meshGnd.obb.size.y = 0.001;//地面なので薄く
-//    gltfGnd.obb.setOrientation(Quaternion::Identity());
-//    LOG_INFO(U"size{} angle{} pos{}"_fmt(gltfGnd.obb.size, gltfGnd.obb.orientation, gltfGnd.obb.center));
+
+    meshGnd.ob.size.y = 0.001;//地面なので薄く
     updatePosline(cameraGUI, meshGnd, timeline, 0, PRB_ACT);
     updatePosline(cameraGUI, meshGnd, timeline, 0, PRB_CAM);
     updatePosline(cameraGUI, meshGnd, timeline, 0, PRB_FOCUS);
-
-//    Float3 angle = cameraGUIView.getCameraAngle( cameraGUIView.getEyePosition() - gltfArrow.camera.getEyePosition() ); //これが基準角
-//    gltfArrow.lRot = angle;
-
 }
 
 //タイムラインコントロールのラインリンク処理
@@ -767,11 +869,12 @@ void updatedrawMarker( Timeline& timeline )
     Float2 epos = cameraGUI.worldToScreenPoint( eyePosR.xyz() );
     Gui[M_EYE].x = epos.x;
     Gui[M_EYE].y = epos.y;
+	OrientedBox ob;
 
     //移動するマーカーはＺ座標をOBB衝突判定する２DはGui[]、３Dはactor等のパラメータ変数
-    actorPos  = guiDrag(cameraGUI,meshGnd.obb, U"\xF1382", Gui[M_ACT],  grabState, M_ACT,ColorF(0,0,1),ColorF(1),    actorPos );
-    eyePosR   = guiDrag(cameraGUI,meshGnd.obb, U"\xF0100", Gui[M_EYE],  grabState, M_EYE, ColorF(1),   Palette::Red, eyePosR );
-    focusPosR = guiDrag(cameraGUI,meshGnd.obb, U"\xF0B69", Gui[M_FOCUS],grabState, M_FOCUS, ColorF(1), Palette::Red, focusPosR );
+    actorPos  = guiDrag(cameraGUI,meshGnd.ob, U"\xF1382", Gui[M_ACT],  grabState, M_ACT,ColorF(0,0,1),ColorF(1),    actorPos );
+    eyePosR   = guiDrag(cameraGUI,meshGnd.ob, U"\xF0100", Gui[M_EYE],  grabState, M_EYE, ColorF(1),   Palette::Red, eyePosR );
+    focusPosR = guiDrag(cameraGUI,meshGnd.ob, U"\xF0B69", Gui[M_FOCUS],grabState, M_FOCUS, ColorF(1), Palette::Red, focusPosR );
 
     //マーカーリンク処理
     linkMarker( timeline, 0, 0, Gui[M_ACT]);
@@ -781,7 +884,7 @@ void updatedrawMarker( Timeline& timeline )
     if (MouseL.up() || MouseM.up()) grabState.area = M_RELEASE;
 }
 
-// モーフ実装
+// モーフターゲット実装
 // 0:基本       8:驚眉      16:閉歯
 // 1:閉目(下)   9:頑眉      17:開歯
 // 2:開口       10:驚口     18:あ口
@@ -804,7 +907,7 @@ void Main()
     Window::Resize(rectWindow.w, rectWindow.h);
     Window::SetStyle(WindowStyle::Sizable);				// ウィンドウを手動リサイズ可能にする
     Scene::SetBackground(ColorF(0.8, 0.9, 1.0));		// ウィンドウサイズに合わせて拡縮
-	Graphics3D::SetGlobalAmbientColor(ColorF{ 1 });
+	Graphics3D::SetGlobalAmbientColor(ColorF{1});
 
 #ifdef USE_WEBCAMERA
 	//WEBカメラ初期化
@@ -823,14 +926,14 @@ void Main()
 	cameraGUI = PixieCamera(rectWindow, 45_deg, eyePosGUI.xyz(), focusPosGUI);
 	cameraVRM = PixieCamera(rectVRM, 45_deg, eyePosVRM.xyz(), focusPosVRM);
 
-    MSRenderTexture renderTextureVRM = { (unsigned)rectVRM.w, (unsigned)rectVRM.h, TextureFormat::R8G8B8A8_Unorm_SRGB, HasDepth::Yes  }; // RT初期化
+    MSRenderTexture renderTextureVRM = { (unsigned)rectVRM.w, (unsigned)rectVRM.h,
+		                                  TextureFormat::R8G8B8A8_Unorm_SRGB, HasDepth::Yes  }; // RT初期化
 
     InitGltf();                                                                             // glTF初期化
     InitGUI();
 
     Timeline guiTimeline ;
     InitTimeline( guiTimeline, Rect{10,700,1800,265} ); // タイムラインGUI初期化
-	guiTimeline.setHidden( true );
 
     // アセット登録
     FontAsset::Register(U"fontT",30, U"TOD4UI-Regular.otf");
@@ -852,8 +955,11 @@ void Main()
 		//通常描画にカメラ指定
 		Graphics3D::SetCameraTransform(cameraGUI.getViewProj(), cameraGUI.getEyePosition());
 		Update(guiTimeline);
-		Draw( cameraGUI, guiTimeline);							//通常の描画
+		updateMouse( meshGnd, focusPosGUI, eyePosGUI );
 
+		Draw( cameraGUI, guiTimeline );							//通常の描画
+
+#ifdef ENABLE_VTUBERMODE
 		//VRM描画にカメラ指定
 		Graphics3D::SetCameraTransform(cameraVRM.getViewProj(), cameraVRM.getEyePosition());
 		renderTextureVRM.clear( ColorF{ 1,1,1,0 });				// RTをクリア
@@ -861,7 +967,8 @@ void Main()
 			const ScopedRenderStates3D sr{ SamplerState::RepeatAniso, RasterizerState::SolidCullFront };
 			const ScopedRenderStates3D bs{ blendstate };
 			const ScopedRenderTarget3D rt{ renderTextureVRM };  // 描画対象をRTに変更
-#if 0
+
+#ifdef USE_WEBCAM
 			//Webカメラ描画
 			if (webcam.hasNewFrame())
 			{
@@ -869,16 +976,17 @@ void Main()
 				webcamTex.fill(image);
 			}
 			webcamTex.draw();
-#endif
 
 			updateMorph( meshVRM );
+
 			meshVRM.lTra.y = -15;
 			meshVRM.eRot.z = 0;
-			meshVRM.drawVRM();			// VRM描画
+			meshVRM.drawVRM();				// VRM描画
+#endif
 
 			if ( rectVRM.mouseOver() )
 			{
-				if ( MouseL.pressed()) //中ボタン
+				if (MouseL.pressed()) //中ボタン
 				{
 					static Float3 rotN;
 					static float posN,eyeRrot,eyeLrot,eyeRpos,eyeLpos;
@@ -903,9 +1011,9 @@ void Main()
 			renderTextureVRM.resolve();
 			renderTextureVRM.draw(rectVRM.pos);					// RTを描画
 		}
-
+#endif
 		guiTimeline.main();										// タイムラインGUI処理
-		updatedrawMarker(guiTimeline);
+		updatedrawMarker( guiTimeline );
 	}
 }
 

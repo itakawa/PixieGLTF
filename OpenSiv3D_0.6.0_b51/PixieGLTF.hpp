@@ -1,6 +1,8 @@
 ﻿# pragma once
 
 # include <omp.h>
+# include <thread>
+
 # include <Siv3D.hpp> // OpenSiv3D v0.6
 # include "PixieCamera.hpp"
 # include "OBB.hpp"
@@ -9,19 +11,31 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define TINYGLTF_NO_STB_IMAGE_WRITE
 #include "App/3rd/tiny_gltf.h"
+
 //# include <DirectXMath.h>
 using namespace DirectX;
 #define CPUSKINNING
 #define BASIS 0			//BASIS
       
 using Word4 = Vector4D<uint16>;
+
+//通常描画の色の指定はテクスチャが有るならテクスチャ色、無いならマテリアル色にしている
+//ただアプリから、任意色指定もしたい場合もあり区別したい。
+//引数省略でColorF usrColor=Color(-1)としておいて、通常描画、それ以外の指定でアプリ指定色描画
+//ユーザー指定色はベタだと、プリミティブが全部同じ色になってしまうので、相対値にしよう
+//テクスチャ色にオフセット掛けるのは、なにがしかユニフォーム変数が必要
+//実際の意味はusrColor.a==-1が相対色、-2が絶対色などのモードが決められる
+constexpr auto USRCOLOR_NOTUSE = 0;
+constexpr auto USRCOLOR_OFFSET = -1;
+constexpr auto USRCOLOR = -2;
+constexpr auto NOTUSE = (-1);
  
 struct Channel
 {
-    uint8 typeDelta;
-	uint8 numMorph;
-    int16 idxNode;
-    int32 idxSampler;
+    uint8 typeDelta=0;
+	uint8 numMorph=0;
+    int16 idxNode=0;
+    int32 idxSampler=0;
     Array<std::pair<int32, Array<float> >> deltaKeyframes;
 	Channel() { numMorph = 0; typeDelta = 0; idxSampler = -1; idxNode = -1; }
 };
@@ -29,8 +43,8 @@ struct Channel
 struct Sampler
 {
     Array<std::pair<int32, float>> interpolateKeyframes;
-    float  minTime;
-    float  maxTime;
+    float  minTime=0.0;
+    float  maxTime=0.0;
     Sampler() { minTime = 0.0; maxTime = 0.0; }
 };
 
@@ -40,22 +54,22 @@ struct Frame
     Array<DynamicMesh>	Meshes;	// メッシュ(実行時)※Mesh(モーフ無)/DynamicMesh(モーフ有)の選択が必要
     Array<uint8>     useTex;    // テクスチャ/頂点色識別子
     Array<Mat4x4>    morphMatBuffers;// モーフターゲット対象の姿勢制御行列
-    Float3           obbSize;		//フレームのサイズ：再生時にフレームのサイズをローカル変換してOBBに反映
-    Float3           obbCenter;		//原点オフセット：原点へのオフセット量
+    Float3           obbSize{1,1,1};		//フレームのサイズ：再生時にフレームのサイズをローカル変換してOBBに反映
+    Float3           obbCenter{0,0,0};		//原点オフセット：原点へのオフセット量
 };
 
 struct NodeParam	//ノード制御パラメータリスト旧extensions
 {
-	Mat4x4 matLocal;	// ローカル座標変換行列。原点に対するノードの姿勢に関する
-	Mat4x4 matWorld;	// ワールド座標変換行列。最終頂点に適用
-	Float3 poseTra;		// ローカル座標変換(移動量)この３つはglTFの基本姿勢から取得して
-	Float4 poseRot;		// ローカル座標変換(回転量)アニメーションの相対変化量を適用して
-	Float3 poseSca;		// ローカル座標変換(拡縮量)matLocalを算出
-	Mat4x4 matModify;	// VRMモードのローカル座標変換行列。ローカル座標変換行列に適用する。
-	Float3 modTra;		// VRMモードのローカル座標変換(移動量)この３つは外部から姿勢操作
-	Float4 modRot;		// VRMモードのローカル座標変換(回転量)する。
-	Float3 modSca;		// VRMモードのローカル座標変換(拡縮量)
-	bool update;		// VRMモードの更新要求matModifyを更新する。
+	Mat4x4 matLocal;		// ローカル座標変換行列。原点に対するノードの姿勢に関する
+	Mat4x4 matWorld;		// ワールド座標変換行列。最終頂点に適用
+	Float3 posePos{0,0,0};	// ローカル座標変換(移動量)この３つはglTFの基本姿勢から取得して
+	Float4 poseRot{0,0,0,0};	// ローカル座標変換(回転量)アニメーションの相対変化量を適用して
+	Float3 poseSca{1,1,1};	// ローカル座標変換(拡縮量)matLocalを算出
+	Mat4x4 matModify;		// VRMモードのローカル座標変換行列。ローカル座標変換行列に適用する。
+	Float3 modPos{0,0,0};	// VRMモードのローカル座標変換(移動量)この３つは外部から姿勢操作
+	Float4 modRot{0,0,0,0};	// VRMモードのローカル座標変換(回転量)する。
+	Float3 modSca{0,0,0};	// VRMモードのローカル座標変換(拡縮量)
+	bool update=false;		// VRMモードの更新要求matModifyを更新する。
 };
 
 struct PrecAnime      //gltfmodel.animationsに対応
@@ -76,26 +90,25 @@ struct MorphMesh
     Array<Array<Vertex3D>>	BasisBuffers;  // モーフ基本形状のコピー	[プリミティブ番号][メッシュの頂点番号]
 	//※モーフ可能なメッシュはノード1つ固定の制約(プリミティブは複数)
 
-    uint32                   TexCoordCount;// モーフ有メッシュのUV座標数(aniModel用)
-    Array<Float2>            TexCoord;     // モーフ有メッシュのUV座標(aniModel用)
+    uint32                   TexCoordCount=0;	// モーフ有メッシュのUV座標数(aniModel用)
+    Array<Float2>            TexCoord;			// モーフ有メッシュのUV座標(aniModel用)
 };
 
 //モーフ情報
 struct MorphTargetInfo
 {
-    float Speed;                // モーフ速度
-    float CntSpeed;             // モーフ速度制御カウント(>1.0で更新)
-    int32 NowTarget;            // モーフターゲット(現在)  無効-1、通常0～
-    int32 DstTarget;            // モーフターゲット(遷移先)通常-1、設定あれば0～
-    int32 IndexTrans;           // 遷移カウント、通常-1、遷移中0～
-    Array<float> WeightTrans;   // 遷移ウェイトテーブル、-1か100％で終端
+    float Speed=1.0 ;			// モーフ速度
+    float CntSpeed=0.0 ;		// モーフ速度制御カウント(>1.0で更新)
+    int32 NowTarget=0 ;			// モーフターゲット(現在)  無効-1、通常0～
+    int32 DstTarget=0 ;			// モーフターゲット(遷移先)通常-1、設定あれば0～
+    int32 IndexTrans=-1 ;		// 遷移カウント、通常-1、遷移中0～
+	Array<float> WeightTrans;	// 遷移ウェイトテーブル、-1か100％で終端
 };
 
 struct AnimeModel
 {
     Array<PrecAnime>        precAnimes;
     MorphMesh               morphMesh;
-	bool					obbDebug;
 };
 
 struct NoAModel
@@ -109,10 +122,6 @@ struct NoAModel
 
     Array<Mat4x4>           morphMatBuffers;// モーフ対象の姿勢制御行列
     MorphMesh               morphMesh;
-
-	bool					obbDebug;
-	Float3                  obbSize;       // モデルのサイズ：モデルのサイズをローカル変換してOBBに反映
-    Float3                  obbCenter;     // 原点へのオフセット
 };
 
 struct VRMModel
@@ -127,10 +136,6 @@ struct VRMModel
     Array<Array<Mat4x4>>    Joints;
     Array<Mat4x4>           morphMatBuffers;// モーフ対象の姿勢制御行列
     MorphMesh               morphMesh;
-
-	bool					obbDebug;
-	Float3                  obbSize;       // モデルのサイズ：モデルのサイズをローカル変換してOBBに反映
-    Float3                  obbCenter;     // 原点へのオフセット
 };
 
 
@@ -140,7 +145,6 @@ constexpr uint32 NUMMIX = 3;				// TODO 3個制限は不要→全部に
 class PixieGLTF
 {
 private:
-    tinygltf::Model gltfModel;
 	NoAModel        noaModel;
 	AnimeModel      aniModel;
 	VRMModel        vrmModel;
@@ -148,22 +152,26 @@ private:
 
 	Array<NodeParam>		nodeParams;//NOA/VRM用。ANIは自動変数（とするとアニメは外部ボーン操作ができない）
 public:
+    tinygltf::Model gltfModel;
 	Array<MorphTargetInfo>	morphTargetInfo ;
-	bool					obbDebug;
+
+	bool					obbDebug = false;
+	Float3                  obbSize{1,1,1};  // モデルのサイズ：モデルのサイズをローカル変換してOBBに反映
+    Float3                  obbCenter{0,0,0};// 原点へのオフセット
 
     MODELTYPE modelType;
-    String textFile;
+    String textFile = U"";
 
-    Float3 lTra{0,0,0};         //ローカル変換1
+    Float3 lPos{0,0,0};         //ローカル変換1
     Float3 lSca{1,1,1};
 
 	Float3 eRot{0,0,0};			//オイラー回転※最終的な角度は、四元数(オイラー回転)ｘ四元数回転
 	Quaternion qRot{0,0,0,1};	//四元数回転	※オイラー回転使いたく無い時はRPY=000、四元数回転使いたくないときはXYZW=0001
 
-    Float3 rTra{0,0,0};         //ローカル変換2(相対)
+    Float3 rPos{0,0,0};         //ローカル変換2(相対)
 
-    int32 currentFrame;
-
+    int32 currentFrame=0;
+	OrientedBox ob;
 	OBB obb;
     Mat4x4 matVP;
 
@@ -184,8 +192,8 @@ public:
                int32 morph=0)                  //モーフ番号
     {
         textFile = filename;
-        lTra = localpos;
-        rTra = relpos;
+        lPos = localpos;
+        rPos = relpos;
         lSca = scale;
         eRot = rotate;
         currentFrame = frame;
@@ -207,23 +215,23 @@ public:
 		if (result && modeltype == MODELNOA)
 		{
 			gltfSetupNOA();
-			noaModel.obbDebug = debug;
+			obbDebug = debug;
 		}
 
 		else if (result && modeltype == MODELANI)
 		{
 			gltfSetupANI(MODELANI, aniModel, gltfModel, cycleframe, animeid);
-			aniModel.obbDebug = debug;
+			obbDebug = debug;
 		}
 
 		else if (result && modeltype == MODELVRM)
 		{
 			gltfSetupVRM();
-			vrmModel.obbDebug = debug;
+			obbDebug = debug;
 		}
 
 		//初期状態のカメラ、視点、注視点はY軸方向に+10の位置
-        camera.setView(lTra, lTra + Float3(+0, +10, +0));
+        camera.setView(lPos, lPos + Float3(+0, +10, +0));
     }
 
 
@@ -287,7 +295,7 @@ public:
 		np.matLocal = matlocal;				// ローカル座標変換行列。原点に対するノードの姿勢を初期設定
 
 		np.matWorld = Mat4x4::Identity();	// ワールド座標変換行列。最終頂点に適用
-		np.poseTra = Float3{0,0,0};			// ローカル座標変換(移動量)この３つはglTFの基本姿勢から取得して
+		np.posePos = Float3{0,0,0};			// ローカル座標変換(移動量)この３つはglTFの基本姿勢から取得して
 		np.poseRot = Float4{0,0,0,1};		// ローカル座標変換(回転量)アニメーションの相対変化量を適用して
 		np.poseSca = Float3{1,1,1};			// ローカル座標変換(拡縮量)matLocalを算出
 
@@ -307,7 +315,7 @@ public:
 		Mat4x4 matlocal = np.matLocal ;		  //glTFの基本姿勢定義
 
 		Float4 rr = np.poseRot;			      //glTFアニメの姿勢変位
-		Float3 tt = np.poseTra;
+		Float3 tt = np.posePos;
 		Float3 ss = np.poseSca;
 		Mat4x4 matpose = Mat4x4::Identity().Scale(ss)*
 			             Mat4x4(Quaternion(rr))*
@@ -330,6 +338,9 @@ public:
     {
         modelType = MODELNOA;
 		nodeParams.resize( gltfModel.nodes.size() );
+
+		const MorphTargetInfo mti{1.0, 0.0, 0,0,-1,{ 0,-1 } };
+		morphTargetInfo.resize( NUMMIX, mti );
 
 		for (int32 nn = 0; nn < gltfModel.nodes.size(); nn++)
 			gltfSetupPosture( gltfModel, nn, nodeParams );
@@ -370,17 +381,6 @@ public:
 			}
 		}
 
-		//モーフ設定を準備
-		MorphTargetInfo mti;
-		mti.Speed = 1.0;
-		mti.CntSpeed = 0;
-		mti.NowTarget = 0;
-		mti.DstTarget = 0;
-		mti.Speed = 1.0;
-		mti.IndexTrans = -1;
-		mti.WeightTrans = { 0,-1 };
-		for (int32 i = 0; i < NUMMIX; i++) morphTargetInfo.emplace_back( mti );
-
 		for (uint32 nn = 0; nn < gltfModel.nodes.size(); nn++)
 		{
 			auto& node = gltfModel.nodes[nn];
@@ -388,7 +388,7 @@ public:
 			gltfSetupNOA( node, nn, Joints );
 		}
 
-        //頂点の最大最小からサイズを計算してAABBを設定
+        //頂点の最大最小からサイズを計算してOBBを設定
         Float3 vmin = { FLT_MAX,FLT_MAX,FLT_MAX };
         Float3 vmax = { FLT_MIN,FLT_MIN,FLT_MIN };
 
@@ -408,11 +408,21 @@ public:
         }
 
 		nodeParams.clear();
-//		noaModel.MeshDatas.clear();	//モーフで使うためクリアしない
+//		noaModel.MeshDatas.clear();	//モーフで使う
 
         //静的モデルのサイズ、中心オフセットを保存
-        noaModel.obbSize = (vmax - vmin);
-        noaModel.obbCenter = vmin + (vmax - vmin)/2;
+        __m128 rot = XMQuaternionRotationRollPitchYaw(ToRadians(eRot.x), ToRadians(eRot.y), ToRadians(eRot.z));
+        Mat4x4 mrot =  Mat4x4(Quaternion(rot)*qRot);
+		Float3 t = lPos + rPos;
+		Mat4x4 mat = Mat4x4::Identity().Scale(Float3{ -lSca.x,lSca.y,lSca.z }) * mrot * Mat4x4::Identity().Translate(t);        
+/*
+		obb.setMatrix(mat);
+		obb.setPos( obbCenter = vmin + (vmax - vmin)/2 );
+		obb.setSize( obbSize = (vmax - vmin) );
+*/
+		ob.setOrientation(Quaternion(rot) * qRot);
+		ob.setPos(obbCenter = vmin + (vmax - vmin) / 2 );
+		ob.setSize(obbSize = (vmax - vmin));
     }
 
     void gltfSetupNOA( tinygltf::Node& node, uint32 nodeidx, Array<Array<Mat4x4>> &Joints )
@@ -525,7 +535,7 @@ public:
 						matnor = matskin.inverse().transposed();
                 }
 
-				mv.pos = Float3(vec4pos.getX(), vec4pos.getY(), vec4pos.getZ()) / vec4pos.getW();
+				mv.pos = vec4pos.xyz() /vec4pos.getW();
 				mv.normal = SIMD_Float4{ DirectX::XMVector4Transform(SIMD_Float4(mv.normal, 1.0f), matskin) }.xyz();
                 vertices.emplace_back(mv);
             }
@@ -683,6 +693,9 @@ public:
 		modelType = MODELVRM;
 		nodeParams.resize( gltfModel.nodes.size() );
 
+		const MorphTargetInfo mti{1.0, 0.0, 0,0,-1,{ 0,-1 } };
+		morphTargetInfo.resize( NUMMIX, mti );
+
 		//ノードの基本姿勢を登録
 		for (int32 nn = 0; nn < gltfModel.nodes.size(); nn++)
 			gltfSetupPosture( gltfModel, nn, nodeParams );
@@ -728,17 +741,6 @@ public:
 			}
 		}
 
-		//モーフ設定を準備
-		MorphTargetInfo mti;
-		mti.Speed = 1.0;
-		mti.CntSpeed = 0;
-		mti.NowTarget = 0;
-		mti.DstTarget = 0;
-		mti.Speed = 1.0;
-		mti.IndexTrans = -1;
-		mti.WeightTrans = { 0,-1 };
-		for (int32 i = 0; i < NUMMIX; i++) morphTargetInfo << mti;
-
 		//1次処理を進められるとこまで
 		for (uint32 nn = 0; nn < gltfModel.nodes.size(); nn++)
 		{
@@ -754,7 +756,7 @@ public:
 	// 後処理は残りの演算を行い、描画する。
 	// matmodify修正無い場合は、直でNoA描画を行い実行速度を改善する。
 
-	void drawVRM(uint32 istart = -1, uint32 icount = -1)
+	void drawVRM(int32 istart = NOTUSE, int32 icount = NOTUSE)
 	{
 		for (int32 nn = 0; nn < gltfModel.nodes.size(); nn++)
         {
@@ -925,7 +927,7 @@ public:
 						matnor = matskin.inverse().transposed();
 				}
 
-				mv.pos = Float3(vec4pos.getX(), vec4pos.getY(), vec4pos.getZ()) / vec4pos.getW();
+				mv.pos = vec4pos.xyz() /vec4pos.getW();
 				mv.normal = SIMD_Float4{ DirectX::XMVector4Transform(SIMD_Float4(mv.normal, 1.0f), matskin) }.xyz();
 //頂点登録
 				vertices.emplace_back(mv);
@@ -1027,14 +1029,14 @@ public:
 	//ここからやっと描画
 
 
-    void gltfDrawVRM( uint32 istart = -1, uint32 icount = -1 )
+    void gltfDrawVRM( int32 istart = NOTUSE, int32 icount = NOTUSE )
 	{
         uint32 tid = 0;
 //ここでQuaternionにしたら意味なくない？
         __m128 rot = XMQuaternionRotationRollPitchYaw(ToRadians(eRot.x), ToRadians(eRot.y), ToRadians(eRot.z));
         Mat4x4 mrot =  Mat4x4(Quaternion(rot)*qRot);
 
-        Float3 t = lTra + rTra;
+        Float3 t = lPos + rPos;
 //GL系メッシュをDX系で描画時はXミラーして逆カリング
 //		Mat4x4 mat = Mat4x4::Identity().scaled(lSca) * mrot * Mat4x4::Identity().translated(t) ;
 		Mat4x4 mat = Mat4x4::Identity().Scale(Float3{ -lSca.x,lSca.y,lSca.z }) * mrot * Mat4x4::Identity().Translate(t);
@@ -1063,7 +1065,7 @@ public:
         return *this;
     }
 
-    void drawMesh(uint32 istart = -1, uint32 icount = -1)
+	void drawMesh(ColorF usrColor=ColorF(NOTUSE), int32 istart = NOTUSE, int32 icount = NOTUSE)
     {
 		Rect rectdraw = camera.getSceneRect();
 
@@ -1074,7 +1076,7 @@ public:
         __m128 rot = XMQuaternionRotationRollPitchYaw(ToRadians(eRot.x), ToRadians(eRot.y), ToRadians(eRot.z));
         Mat4x4 mrot =  Mat4x4(Quaternion(rot)*qRot);
 
-        Float3 t = lTra + rTra;
+        Float3 t = lPos + rPos;
 
 //GL系メッシュをDX系で描画時はXミラーして逆カリング
 		//Mat4x4 mat = Mat4x4::Identity().scaled(lSca) * mrot * Mat4x4::Identity().translated(t) ;
@@ -1124,47 +1126,51 @@ public:
                     SIMD_Float4 vec4pos = DirectX::XMVector4Transform(SIMD_Float4(morphmv[ii].pos, 1.0f), matskin);
                     Mat4x4 matnor = matskin.inverse().transposed();
 
-                    morphmv[ii].pos = Float3(vec4pos.getX(), vec4pos.getY(), vec4pos.getZ()) / vec4pos.getW();
+                    morphmv[ii].pos = vec4pos.xyz() /vec4pos.getW();
 					morphmv[ii].normal = SIMD_Float4{ DirectX::XMVector4Transform(SIMD_Float4(morphmv[ii].normal, 1.0f), matnor) }.xyz();
                     morphmv[ii].tex = noa.MeshDatas[i].vertices[ii].tex;
                 }
 
 				noa.Meshes[i].fill(morphmv);				//頂点座標を再計算後にすげ替え
-
-				if (istart == -1)
-				{
-					if (noa.useTex[i])  noa.Meshes[i].draw(mat, noa.meshTexs[i], noa.meshColors[i]);
-					else				noa.Meshes[i].draw(mat, noa.meshColors[i]);
-				}
-				else
-				{
-					if (noa.useTex[i])  noa.Meshes[i].drawSubset(istart, icount, mat, noa.meshTexs[tid++]);
-					else				noa.Meshes[i].drawSubset(istart, icount, mat, noa.meshColors[i]);
-                }
-
                 morphidx++;
             }
-            else           //モーフなし
+
+			if (istart == NOTUSE)	//部分描画なし
 			{
-				if (istart == -1)
+				if (noa.useTex[i])	//テクスチャ色
+					noa.Meshes[i].draw(mat, noa.meshTexs[i], noa.meshColors[i]);
+
+				else				//マテリアル色
 				{
-					if (noa.useTex[i])  noa.Meshes[i].draw(mat, noa.meshTexs[i], noa.meshColors[i]);
-					else				noa.Meshes[i].draw( mat, noa.meshColors[i]);
-				}
-				else
-				{
-					if (noa.useTex[i])  noa.Meshes[i].drawSubset(istart, icount, mat, noa.meshTexs[tid++]);
-					else				noa.Meshes[i].drawSubset(istart, icount, mat, noa.meshColors[i]);
+					if ( usrColor.a >= USRCOLOR_NOTUSE )		//ユーザー色指定なし
+						noa.Meshes[i].draw(mat, noa.meshColors[i]);
+					else if	( usrColor.a == USRCOLOR_OFFSET )	//ユーザー色相対指定
+						noa.Meshes[i].draw(mat, noa.meshColors[i] + ColorF(usrColor.rgb(),1) );
+					else if	( usrColor.a == USRCOLOR )			//ユーザー色絶対指定
+						noa.Meshes[i].draw(mat, ColorF(usrColor.rgb(),1) );
 				}
 			}
-        }
+			else				//部分描画あり
+			{
+				if (noa.useTex[i])
+					noa.Meshes[i].drawSubset(istart, icount, mat, noa.meshTexs[tid++]);
+				else				//マテリアル色
+				{
+					if ( usrColor.a >= USRCOLOR_NOTUSE )		//ユーザー色指定なし
+						noa.Meshes[i].drawSubset(istart, icount, mat, noa.meshColors[i]);
+					else if	( usrColor.a == USRCOLOR_OFFSET )	//ユーザー色相対指定
+						noa.Meshes[i].drawSubset(istart, icount,mat, noa.meshColors[i] + ColorF(usrColor.rgb(),1) );
+					else if	( usrColor.a == USRCOLOR )			//ユーザー色絶対指定
+						noa.Meshes[i].drawSubset(istart, icount,mat, ColorF(usrColor.rgb(),1) );
+				}
+            }
+		}
 
-		obb.setMatrix(mat);
-		obb.setPos( noa.obbCenter).setSize(noa.obbSize).scaled(lSca).movedBy(lTra);
-		if (noa.obbDebug) obb.draw( matVP, ColorF(0,0,1,0.1) );
+		if (obbDebug) ob.draw(ColorF(0,0,1, 0.1) );
     }
 
-	void gltfSetupANI( const MODELTYPE& modeltype, AnimeModel& animodel, tinygltf::Model& gltfmodel, uint32 cycleframe = 60, int32 animeid=0)
+	void gltfSetupANI( const MODELTYPE& modeltype, AnimeModel& animodel,
+		               tinygltf::Model& gltfmodel, uint32 cycleframe = 60, int32 animeid=0)
     {
         modelType = modeltype;
 
@@ -1206,27 +1212,29 @@ public:
 			frametimes.emplace_back(currenttime += frametime);
 
 		//最大スレッド数でメモリ確保
+		omp_set_num_threads(32);
 		int32 tmax = omp_get_max_threads();
 		aniModel.precAnimes[ animeid ].Samplers.resize(tmax);
 		aniModel.precAnimes[ animeid ].Channels.resize(tmax);
 
+		size_t bufsize = 0;
 		for (int32 th = 0; th < tmax; th++)
 		{
 			auto& as = aniModel.precAnimes[ animeid ].Samplers[th];
 			auto& ac = aniModel.precAnimes[ animeid ].Channels[th];
-			as.resize(mas.size());
-			ac.resize(mac.size());
+			as.resize(mas.size()); bufsize += mas.size()*sizeof(as);
+			ac.resize(mac.size()); bufsize += mac.size()*sizeof(ac);
 
 			for (int32 ss = 0; ss < mas.size(); ss++)
 			{
 				auto& mbsi = gltfModel.accessors[mas[ss].input];  // 前フレーム情報
-				as[ss].interpolateKeyframes.resize(mbsi.count);
+				as[ss].interpolateKeyframes.resize(mbsi.count); bufsize += mbsi.count*sizeof(as[ss].interpolateKeyframes);
 			}
 
 			for (int32 cc = 0; cc < ac.size(); cc++)
 			{
 				auto& maso = gltfModel.accessors[mas[cc].output];
-				ac[cc].deltaKeyframes.resize(maso.count);
+				ac[cc].deltaKeyframes.resize(maso.count);bufsize += maso.count *sizeof(ac[cc].deltaKeyframes);
 
 				//メッシュの場合は、モーフ数を記録
 				auto& mid = gltfModel.nodes[mac[cc].target_node].mesh;
@@ -1234,20 +1242,27 @@ public:
 
 				for (int32 ff = 0; ff < maso.count; ff++)
 				{
-					if( ac[cc].numMorph ) ac[cc].deltaKeyframes[ff].second.resize( ac[cc].numMorph );
-					else                  ac[cc].deltaKeyframes[ff].second.resize(4);
+					if (ac[cc].numMorph)
+					{
+						ac[cc].deltaKeyframes[ff].second.resize(ac[cc].numMorph); bufsize += ac[cc].numMorph * sizeof(ac[cc].deltaKeyframes[ff].second);
+					}
+					else
+					{
+						ac[cc].deltaKeyframes[ff].second.resize(4);                bufsize += 4;
+					}
 				}
 			}
 			for (int32 ss = 0; ss < mas.size(); ss++)
 			{
 				auto& mssi = gltfModel.accessors[mas[ss].input];  // 前フレーム情報
-				as[ss].interpolateKeyframes.resize(mssi.count);
+				as[ss].interpolateKeyframes.resize(mssi.count);		bufsize += mssi.count * sizeof(as[ss].interpolateKeyframes);
 			}
 
 			//モーフメッシュのTexCoordを初回アニメの初回フレームのみで収集するので制限数を設定
 			if (th == 1 && aniModel.morphMesh.TexCoordCount == (unsigned)-1)
 				aniModel.morphMesh.TexCoordCount = aniModel.morphMesh.TexCoord.size();
 		}
+		LOG_INFO(U"TOTAL BUFFER SIZE:{} Bytes"_fmt(bufsize)); //900,384,000 Bytes
 
 
 #pragma omp parallel for
@@ -1255,7 +1270,7 @@ public:
 		{
 			int32 th = omp_get_thread_num();
 			double bwt[10];
-			LOG_INFO(U"START:Thread[{}] Frame[{}]"_fmt(th,cf));
+//			LOG_INFO(U"START:Thread[{}] Frame[{}]"_fmt(th,cf));
 bwt[0] = omp_get_wtime();	//START
 
 			auto& gm = gltfModel;
@@ -1541,7 +1556,7 @@ bwt[7] = omp_get_wtime();	//VERTICE
 	void gltfInterpolateStep(tinygltf::Model& model, Channel& ch, int32 lowframe, Array<NodeParam>& _nodeParams )
     {
 		Array<float>& v = ch.deltaKeyframes[lowframe].second;
-		if		(ch.typeDelta == 1) _nodeParams[ch.idxNode].poseTra = Float3{ v[0], v[1], v[2] };
+		if		(ch.typeDelta == 1) _nodeParams[ch.idxNode].posePos = Float3{ v[0], v[1], v[2] };
 		else if (ch.typeDelta == 3) _nodeParams[ch.idxNode].poseRot = Float4{ v[0], v[1], v[2], v[3] };
 		else if	(ch.typeDelta == 2) _nodeParams[ch.idxNode].poseSca = Float3{ v[0], v[1], v[2] };
 	}
@@ -1554,7 +1569,7 @@ bwt[7] = omp_get_wtime();	//VERTICE
         {
 			Float3 low{ l[0], l[1], l[2] };
 			Float3 upp{ u[0], u[1], u[2] };
-			_nodeParams[ch.idxNode].poseTra = low * (1.0 - tt) + upp * tt;
+			_nodeParams[ch.idxNode].posePos = low * (1.0 - tt) + upp * tt;
 		}
 
 		else if (ch.typeDelta == 3)		//Rotation
@@ -1602,7 +1617,7 @@ bwt[7] = omp_get_wtime();	//VERTICE
 		Float4 v1{ u[0],u[1],u[2],u[3] };
 
 		if (ch.typeDelta == 1) //Translate
-			_nodeParams[ch.idxNode].poseTra = cubicSpline(tt, v0, bb, v1, aa).xyz();
+			_nodeParams[ch.idxNode].posePos = cubicSpline(tt, v0, bb, v1, aa).xyz();
 
 		else if (ch.typeDelta == 3) //Rotation
         {
@@ -1657,11 +1672,9 @@ bwt[7] = omp_get_wtime();	//VERTICE
 
 
     void gltfComputeMesh( tinygltf::Model gm, uint32 cf, int32 animeid, tinygltf::Node& node,
-		                     Array<float>& weights, Array<Array<Mat4x4>> &Joints, double *bwt )
+		                  Array<float>& weights, Array<Array<Mat4x4>> &Joints, double *bwt )
     {
         uint32 morphidx = 0;                     //モーフありメッシュの個数
-
-
 
 		//このノードのモーフ構築(初回フレームのみ)
 		if (cf == 0)
@@ -1730,9 +1743,9 @@ bwt[1] = omp_get_wtime();
 
 					//4ジョイント合成
 					Mat4x4 matskin = w4.x * Joints[node.skin][j4.x] +
-									  w4.y * Joints[node.skin][j4.y] +
-									  w4.z * Joints[node.skin][j4.z] +
-									  w4.w * Joints[node.skin][j4.w];
+									 w4.y * Joints[node.skin][j4.y] +
+									 w4.z * Joints[node.skin][j4.z] +
+									 w4.w * Joints[node.skin][j4.w];
 
 					if (pr.targets.size() > 0)						//モーフありメッシュ
 					{
@@ -1742,11 +1755,12 @@ bwt[1] = omp_get_wtime();
 					}
 
 					SIMD_Float4 vec4pos = DirectX::XMVector4Transform(SIMD_Float4(mv.pos, 1.0f), matskin);
-					Mat4x4 matnor = Mat4x4::Identity().transposed();
+
+					Mat4x4 matnor = Mat4x4::Identity();
 					if (!(std::abs(matskin.determinant()) < 10e-10))
 						matnor = matskin.inverse().transposed();
-
-					mv.pos = Float3(vec4pos.getX(), vec4pos.getY(), vec4pos.getZ()) / vec4pos.getW();
+					
+					mv.pos = vec4pos.xyz() /vec4pos.getW();
 					mv.normal = SIMD_Float4{ DirectX::XMVector4Transform(SIMD_Float4(mv.normal, 1.0f), matskin) }.xyz();
 				}
 				vertices.emplace_back(mv);							//頂点座標を登録
@@ -1854,14 +1868,14 @@ bwt[5] = omp_get_wtime();
 		}
 bwt[6] = omp_get_wtime();
 int32 th = omp_get_thread_num();
-		LOG_INFO(U"END:Thread[{}] Frame[{}] Time[{:.3f}ms] 1:{:.3f}ms 2:{:.3f}ms 3:{:.3f}ms 4:{:.3f}ms 5:{:.3f}ms 6:{:.3f}ms"_fmt(
-				    th,cf,omp_get_wtime()-bwt[0],
-			        (bwt[0]-bwt[1])*1000,(bwt[1]-bwt[2])*1000,(bwt[2]-bwt[3])*1000,(bwt[3]-bwt[4])*1000,(bwt[4]-bwt[5])*1000,(bwt[0]-bwt[6])*1000));
+//		LOG_INFO(U"END:Thread[{}] Frame[{}] Time[{:.3f}ms] 1:{:.3f}ms 2:{:.3f}ms 3:{:.3f}ms 4:{:.3f}ms 5:{:.3f}ms 6:{:.3f}ms"_fmt(
+//				    th,cf,omp_get_wtime()-bwt[0],
+//			        (bwt[0]-bwt[1])*1000,(bwt[1]-bwt[2])*1000,(bwt[2]-bwt[3])*1000,(bwt[3]-bwt[4])*1000,(bwt[4]-bwt[5])*1000,(bwt[0]-bwt[6])*1000));
 
 	}
 
     //drawframe = -1:時間フレーム(アニメ) -1以外:固定フレーム
-    void drawAnime( int32 drawframe = -1,uint32 istart = -1, uint32 icount = -1)
+    void drawAnime( int32 drawframe = NOTUSE, ColorF usrColor=ColorF(NOTUSE), int32 istart = NOTUSE, int32 icount = NOTUSE)
     {
         Rect rectdraw = camera.getSceneRect();
         matVP = camera.getViewProj();
@@ -1871,7 +1885,7 @@ int32 th = omp_get_thread_num();
         __m128 qrot = XMQuaternionRotationRollPitchYaw(ToRadians(eRot.x), ToRadians(eRot.y), ToRadians(eRot.z));
         Mat4x4 mrot =  Mat4x4(Quaternion(qrot));
 
-        Float3 t = lTra + rTra;
+        Float3 t = lPos + rPos;
 
 //GL系メッシュをDX系で描画時はXミラーして逆カリング
 		//Mat4x4 mat = Mat4x4::Identity().scaled(lSca) * mrot * Mat4x4::Identity().translated(t) ;
@@ -1932,46 +1946,51 @@ int32 th = omp_get_thread_num();
                     Mat4x4& matskin = frame.morphMatBuffers[ii];
                     SIMD_Float4 vec4pos = DirectX::XMVector4Transform(SIMD_Float4(morphmv[ii].pos, 1.0f), matskin);
                     Mat4x4 matnor = matskin.inverse().transposed();
-	                morphmv[ii].pos = Float3(vec4pos.getX(), vec4pos.getY(), vec4pos.getZ()) / vec4pos.getW();
+
+					morphmv[ii].pos = vec4pos.xyz() /vec4pos.getW();
 					morphmv[ii].normal = SIMD_Float4{ DirectX::XMVector4Transform(SIMD_Float4(morphmv[ii].normal, 1.0f), matnor) }.xyz();
                     morphmv[ii].tex = ani.morphMesh.TexCoord[i];
                 }
 
 				frame.Meshes[i].fill(morphmv);				//頂点座標を再計算後にすげ替え
-
-				if (istart == -1)
-                {
-					if (frame.useTex[i]) frame.Meshes[i].draw(mat, anime.meshTexs[i], anime.meshColors[i]);
-					else				 frame.Meshes[i].draw(mat, anime.meshColors[i]);
-                }
-				else
-				{
-					if (frame.useTex[i]) frame.Meshes[i].drawSubset(istart, icount, mat, anime.meshTexs[tid++]);
-					else				 frame.Meshes[i].drawSubset(istart, icount, mat, anime.meshColors[i]);
-                }
                 morphidx++;
-
             }
 
-            else//モーフなし(通常顔以外)
-            {
-				if (istart == -1)
-                {
-					if (frame.useTex[i]) frame.Meshes[i].draw(mat, anime.meshTexs[i], anime.meshColors[i]);
-					else				 frame.Meshes[i].draw(mat, anime.meshColors[i]);
+			if (istart == NOTUSE)	//部分描画なし
+			{
+				if (frame.useTex[i])	//テクスチャ色
+					frame.Meshes[i].draw(mat, anime.meshTexs[i], anime.meshColors[i]);
+
+				else				//マテリアル色
+				{
+					if ( usrColor.a >= USRCOLOR_NOTUSE )		//ユーザー色指定なし
+						frame.Meshes[i].draw(mat, anime.meshColors[i]);
+					else if	( usrColor.a == USRCOLOR_OFFSET )	//ユーザー色相対指定
+						frame.Meshes[i].draw(mat, anime.meshColors[i] + ColorF(usrColor.rgb(),1) );
+					else if	( usrColor.a == USRCOLOR )	//ユーザー色絶対指定
+						frame.Meshes[i].draw(mat, ColorF(usrColor.rgb(),1) );
 				}
-				else
-                {
-					if (frame.useTex[i]) frame.Meshes[i].drawSubset(istart, icount, mat, anime.meshTexs[tid++]);
-					else				 frame.Meshes[i].drawSubset(istart, icount, mat, anime.meshColors[i]);
-                }
+			}
+			else				//部分描画あり
+			{
+				if (frame.useTex[i])
+					frame.Meshes[i].drawSubset(istart, icount, mat, anime.meshTexs[tid++]);
+				else				//マテリアル色
+				{
+					if ( usrColor.a >= USRCOLOR_NOTUSE )		//ユーザー色指定なし
+						frame.Meshes[i].drawSubset(istart, icount, mat, anime.meshColors[i]);
+					else if	( usrColor.a == USRCOLOR_OFFSET )	//ユーザー色相対指定
+						frame.Meshes[i].drawSubset(istart, icount,mat, anime.meshColors[i] + ColorF(usrColor.rgb(),1) );
+					else if	( usrColor.a == USRCOLOR )	//ユーザー色絶対指定
+						frame.Meshes[i].drawSubset(istart, icount,mat, ColorF(usrColor.rgb(),1) );
+				}
             }
+
 
         }
 
-        obb = obb.setPos( anime.Frames[cf].obbCenter*lSca ).setSize( anime.Frames[cf].obbSize ).scaled(lSca).movedBy( lTra ) ;
-
-		if (ani.obbDebug) obb.draw( matVP, ColorF(0,0,1,0.1) );
+        obb.setPos( anime.Frames[cf].obbCenter*lSca ).setSize( anime.Frames[cf].obbSize ).scaled(lSca).movedBy( lPos ) ;
+		if (obbDebug) obb.draw( matVP, ColorF(0,0,1,0.1) );
 
     }
 
