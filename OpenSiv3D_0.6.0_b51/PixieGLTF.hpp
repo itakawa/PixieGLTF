@@ -241,7 +241,7 @@ public:
         currentFrame = offsetframe % pa.Frames.size() ;
     }
 
-    tinygltf::Buffer* getBuffer(tinygltf::Model& gltfmodel, tinygltf::Primitive& pr, int* offset, int* stride, int* componenttype)
+    tinygltf::Buffer* getBuffer(tinygltf::Model& gltfmodel, tinygltf::Primitive& pr, size_t* offset, int* stride, int* componenttype)
     {
         if (pr.indices == -1) return nullptr;
         tinygltf::Accessor& ai = gltfmodel.accessors[pr.indices];
@@ -253,7 +253,7 @@ public:
         return &buf;
     }
 
-    tinygltf::Buffer* getBuffer(tinygltf::Model& gltfmodel, tinygltf::Primitive& pr, const std::string attr, int* offset, int* stride, int* componenttype)
+    tinygltf::Buffer* getBuffer(tinygltf::Model& gltfmodel, tinygltf::Primitive& pr, const std::string attr, size_t* offset, int* stride, int* componenttype)
     {
         if (pr.attributes.size() == 0) return nullptr;
         tinygltf::Accessor& ap = gltfmodel.accessors[pr.attributes[attr]];
@@ -265,7 +265,7 @@ public:
         return &buf;
     }
 
-    static tinygltf::Buffer* getBuffer(tinygltf::Model& model, tinygltf::Primitive& pr, const int32 &morphtarget, const char* attr, int* offset, int* stride, int* componenttype)
+    static tinygltf::Buffer* getBuffer(tinygltf::Model& model, tinygltf::Primitive& pr, const int32 &morphtarget, const char* attr, size_t* offset, int* stride, int* componenttype)
     {
         if (pr.targets.size() == 0) return nullptr;
         tinygltf::Accessor& ap = model.accessors[pr.targets[morphtarget].at(attr)];
@@ -444,9 +444,9 @@ public:
             auto& pr = gltfModel.meshes[node.mesh].primitives[pp];
             auto& map = gltfModel.accessors[pr.attributes["POSITION"]];
 
-            int32 opos = 0, otex = 0, onor = 0, ojoints = 0, oweights = 0, oidx = 0, stride = 0, texstride = 0;
-            int32 type_p = 0,type_t = 0,type_n = 0,type_j = 0,type_w = 0,type_i = 0;
-			int32 stride_p = 0, stride_t = 0, stride_n = 0, stride_j = 0, stride_w = 0, stride_i = 0;
+			size_t opos, otex, onor, ojoints, oweights,oidx;
+            int32 type_p,type_t,type_n,type_j,type_w,type_i;
+			int32 stride_p, stride_t, stride_n, stride_j, stride_w, stride_i;
 
             //Meshes->Primitive->Accessor(p,i)->BufferView(p,i)->Buffer(p,i)
 			auto& bpos = *getBuffer(gltfModel, pr, "POSITION", &opos, &stride_p, &type_p);        //type_p=5126(float)
@@ -637,7 +637,8 @@ public:
             if (pr.targets.size() > 0)	//モーフあり
             {
                 //Meshes->Primitive->Accessor(p,i)->BufferView(p,i)->Buffer(p,i)
-                int32 offsetpos = 0, offsetnor = 0, stride = 0;
+				size_t offsetpos = 0, offsetnor = 0;
+				int32 stride = 0;
                 int32 type_p = 0,type_n = 0;
 
                 auto basispos = getBuffer(gltfModel, pr, "POSITION", &offsetpos, &stride, &type_p);
@@ -663,19 +664,20 @@ public:
                 for (int32 tt = 0; tt < pr.targets.size(); tt++)
                 {
                     //Meshes->Primitive->Target->POSITION->Accessor(p,i)->BufferView(p,i)->Buffer(p,i)
-                    int32 offsetpos = 0, offsetnor = 0, stride = 0;
-                    int32 type_p = 0,type_n = 0;
+					size_t opos, onor;
+					int32 stride;
+                    int32 type_p,type_n;
 
-                    auto mtpos = getBuffer(gltfModel, pr, tt, "POSITION", &offsetpos, &stride, &type_p);
-                    auto mtnor = getBuffer(gltfModel, pr, tt, "NORMAL", &offsetnor, &stride, &type_n);
+                    auto mtpos = getBuffer(gltfModel, pr, tt, "POSITION", &opos, &stride, &type_p);
+                    auto mtnor = getBuffer(gltfModel, pr, tt, "NORMAL", &onor, &stride, &type_n);
                     Array<Vertex3D> shapevertices;
 
 					//モーフターゲットメッシュの頂点座標バッファを生成
                     for (int32 vv = 0; vv < numvertex; vv++)
                     {
 						Vertex3D mv;
-                        auto pos = (float*)&mtpos->data.at(vv * 12 + offsetpos);
-                        auto nor = (float*)&mtnor->data.at(vv * 12 + offsetnor);
+                        auto pos = (float*)&mtpos->data.at(vv * 12 + opos);
+                        auto nor = (float*)&mtnor->data.at(vv * 12 + onor);
                         mv.pos = Float3(pos[0], pos[1], pos[2]);
                         mv.normal = Float3(nor[0], nor[1], nor[2]);
                         shapevertices.emplace_back(mv);
@@ -692,9 +694,6 @@ public:
 	{
 		modelType = MODELVRM;
 		nodeParams.resize( gltfModel.nodes.size() );
-
-		const MorphTargetInfo mti{1.0, 0.0, 0,0,-1,{ 0,-1 } };
-		morphTargetInfo.resize( NUMMIX, mti );
 
 		//ノードの基本姿勢を登録
 		for (int32 nn = 0; nn < gltfModel.nodes.size(); nn++)
@@ -741,6 +740,17 @@ public:
 			}
 		}
 
+		//モーフ設定を準備
+		MorphTargetInfo mti;
+		mti.Speed = 1.0;
+		mti.CntSpeed = 0;
+		mti.NowTarget = 0;
+		mti.DstTarget = 0;
+		mti.Speed = 1.0;
+		mti.IndexTrans = -1;
+		mti.WeightTrans = { 0,-1 };
+		for (int32 i = 0; i < NUMMIX; i++) morphTargetInfo << mti;
+
 		//1次処理を進められるとこまで
 		for (uint32 nn = 0; nn < gltfModel.nodes.size(); nn++)
 		{
@@ -756,7 +766,7 @@ public:
 	// 後処理は残りの演算を行い、描画する。
 	// matmodify修正無い場合は、直でNoA描画を行い実行速度を改善する。
 
-	void drawVRM(int32 istart = NOTUSE, int32 icount = NOTUSE)
+	void drawVRM(uint32 istart = -1, uint32 icount = -1)
 	{
 		for (int32 nn = 0; nn < gltfModel.nodes.size(); nn++)
         {
@@ -830,8 +840,9 @@ public:
 			auto& pr = gltfModel.meshes[node.mesh].primitives[pp];
 			auto& map = gltfModel.accessors[pr.attributes["POSITION"]];
 
-			int32 opos = 0, otex = 0, onormal = 0, ojoints = 0, oweights = 0, oidx = 0, stride = 0, texstride = 0;
-			int32 type_p = 0, type_t = 0, type_n = 0, type_j = 0, type_w = 0, type_i = 0;
+			size_t opos, otex, onormal, ojoints, oweights, oidx;
+			int32 stride, texstride;
+			int32 type_p, type_t, type_n, type_j, type_w, type_i;
 
 //TODO この辺毎度とってくるの無駄
 			auto bpos = getBuffer(gltfModel, pr, "POSITION", &opos, &stride, &type_p);
@@ -927,7 +938,7 @@ public:
 						matnor = matskin.inverse().transposed();
 				}
 
-				mv.pos = vec4pos.xyz() /vec4pos.getW();
+				mv.pos = Float3(vec4pos.getX(), vec4pos.getY(), vec4pos.getZ()) / vec4pos.getW();
 				mv.normal = SIMD_Float4{ DirectX::XMVector4Transform(SIMD_Float4(mv.normal, 1.0f), matskin) }.xyz();
 //頂点登録
 				vertices.emplace_back(mv);
@@ -1029,7 +1040,7 @@ public:
 	//ここからやっと描画
 
 
-    void gltfDrawVRM( int32 istart = NOTUSE, int32 icount = NOTUSE )
+    void gltfDrawVRM( uint32 istart = -1, uint32 icount = -1 )
 	{
         uint32 tid = 0;
 //ここでQuaternionにしたら意味なくない？
@@ -1238,7 +1249,8 @@ public:
 
 				//メッシュの場合は、モーフ数を記録
 				auto& mid = gltfModel.nodes[mac[cc].target_node].mesh;
-				ac[cc].numMorph = (mid != -1) ? gltfModel.meshes[ mid ].weights.size() : 0;
+				ac[cc].numMorph = 0;
+				if (mid != -1) ac[cc].numMorph = (uint8)gltfModel.meshes[ mid ].weights.size();
 
 				for (int32 ff = 0; ff < maso.count; ff++)
 				{
@@ -1335,12 +1347,12 @@ bwt[2] = omp_get_wtime();	//GETSAMPLER
 				const auto& stride = maso.ByteStride(mbv[maso.bufferView]);
 				const auto& offset = mbv[macso.bufferView].byteOffset + macso.byteOffset;
 
-				ac[cc].idxNode = mac[cc].target_node;
+				ac[cc].idxNode = (uint16)mac[cc].target_node;
 				ac[cc].idxSampler = mac[cc].sampler;
 
 				//メッシュの場合は、モーフ数を記録
 				if ( gm.nodes[mac[cc].target_node].mesh != -1)
-					ac[cc].numMorph = gm.meshes[ gm.nodes[ mac[cc].target_node ].mesh ].weights.size() ;
+					ac[cc].numMorph = (uint8)gm.meshes[ gm.nodes[ mac[cc].target_node ].mesh ].weights.size() ;
 
 				//ウェイト補間はモーフ専用
 				if (mac[cc].target_path == "weights")
@@ -1425,13 +1437,13 @@ bwt[3] = omp_get_wtime();	//GETCHANNEL
 				const int32 &uppframe = f1.first;
 
 				// 再生時刻を正規化して中間フレーム時刻算出
-				const float mix = (frametime - lowtime) / (upptime - lowtime);
+				const double mix = (frametime - lowtime) / (upptime - lowtime);
 
 				//キーフレーム間ウェイト、補間モード、下位フレーム/時刻、上位フレーム/時刻から姿勢確定
 				auto& interpol = mas[ ac[i].idxSampler ].interpolation;
-				if      (interpol == "STEP")        gltfInterpolateStep  (gm, ac[i], lowframe, nodeAniParams );
-				else if (interpol == "LINEAR")      gltfInterpolateLinear(gm, ac[i], lowframe, uppframe, mix, nodeAniParams );
-				else if (interpol == "CUBICSPLINE") gltfInterpolateSpline(gm, ac[i], lowframe, uppframe, lowtime, upptime, mix, nodeAniParams );
+				if      (interpol == "STEP")        gltfInterpolateStep  ( ac[i], lowframe, nodeAniParams );
+				else if (interpol == "LINEAR")      gltfInterpolateLinear( ac[i], lowframe, uppframe, mix, nodeAniParams );
+				else if (interpol == "CUBICSPLINE") gltfInterpolateSpline( ac[i], lowframe, uppframe, lowtime, upptime, mix, nodeAniParams );
 
 				if (ac[i].idxSampler == -1) continue;
 
@@ -1441,7 +1453,7 @@ bwt[3] = omp_get_wtime();	//GETCHANNEL
 				shapeAnimeWeightArray.resize(ac[i].numMorph);
 				for (int32 mm = 0; mm < ac[i].numMorph; mm++)
 				{
-					float weight = l[mm] * (1.0 - mix) + u[mm] * mix;
+					double weight = l[mm] * (1.0 - mix) + u[mm] * mix;
 					shapeAnimeWeightArray[mm] = weight;
 				}
 			}
@@ -1553,7 +1565,7 @@ bwt[7] = omp_get_wtime();	//VERTICE
 
 	}
 
-	void gltfInterpolateStep(tinygltf::Model& model, Channel& ch, int32 lowframe, Array<NodeParam>& _nodeParams )
+	void gltfInterpolateStep( Channel& ch, int32 lowframe, Array<NodeParam>& _nodeParams )
     {
 		Array<float>& v = ch.deltaKeyframes[lowframe].second;
 		if		(ch.typeDelta == 1) _nodeParams[ch.idxNode].posePos = Float3{ v[0], v[1], v[2] };
@@ -1561,7 +1573,7 @@ bwt[7] = omp_get_wtime();	//VERTICE
 		else if	(ch.typeDelta == 2) _nodeParams[ch.idxNode].poseSca = Float3{ v[0], v[1], v[2] };
 	}
 
-    void gltfInterpolateLinear(tinygltf::Model& model, Channel& ch, int32 lowframe, int32 uppframe, float tt, Array<NodeParam>& _nodeParams)
+    void gltfInterpolateLinear( Channel& ch, int32 lowframe, int32 uppframe, float tt, Array<NodeParam>& _nodeParams)
     {
 		Array<float>& l = ch.deltaKeyframes[lowframe].second;
 		Array<float>& u = ch.deltaKeyframes[uppframe].second;
@@ -1599,7 +1611,7 @@ bwt[7] = omp_get_wtime();	//VERTICE
         return (2 * t3 - 3 * t2 + 1) * v0 + (t3 - 2 * t2 + tt) * bb + (-2 * t3 + 3 * t2) * v1 + (t3 - t2) * aa;
     }
 
-    void gltfInterpolateSpline(tinygltf::Model& model, Channel& ch, int32 lowframe,
+    void gltfInterpolateSpline( Channel& ch, int32 lowframe,
 		                       int32 uppframe, float lowtime, float upptime, float tt, Array<NodeParam>& _nodeParams)
     {
 		float delta = upptime - lowtime;
@@ -1648,7 +1660,6 @@ bwt[7] = omp_get_wtime();	//VERTICE
 	void gltfSetJoint(int32 handle, Float3 trans, Float3 rotate = { 0,0,0 }, Float3 scale = { 1,1,1 } )
 	{
 		if ( handle < 0 ) return;
-		auto& node = gltfModel.nodes[handle];
 		__m128 qrot = XMQuaternionRotationRollPitchYaw(ToRadians(rotate.x), ToRadians(rotate.y), ToRadians(rotate.z)) ;
 		Mat4x4 matmodify = Mat4x4::Identity().Scale(scale) * Mat4x4(qrot) *Mat4x4::Identity().Translate(trans);
 		nodeParams[handle].matModify = matmodify;
@@ -1658,7 +1669,6 @@ bwt[7] = omp_get_wtime();	//VERTICE
 	void gltfSetJoint(int32 handle, Float3 trans, Quaternion rotate = { 0,0,0,1 }, Float3 scale = { 1,1,1 })
 	{
 		if ( handle < 0 ) return;
-		auto& node = gltfModel.nodes[handle];
 		Mat4x4 matmodify = Mat4x4::Identity().Scale(scale) * Mat4x4(rotate) *Mat4x4::Identity().Translate(trans);
 		nodeParams[handle].matModify = matmodify;
 		nodeParams[handle].update = true;
@@ -1666,7 +1676,6 @@ bwt[7] = omp_get_wtime();	//VERTICE
 	Mat4x4 gltfGetMatrix(int32 handle)
 	{
 		if ( handle < 0 ) return Mat4x4::Identity();
-		auto& node = gltfModel.nodes[handle];
 		return nodeParams[handle].matWorld;
 	} 
 
@@ -1688,9 +1697,9 @@ bwt[0] = omp_get_wtime();
 			auto& pr = gm.meshes[node.mesh].primitives[pp];
 			auto& map = gm.accessors[pr.attributes["POSITION"]];
 
-			int32 opos = 0, otex = 0, onor = 0, ojoints = 0, oweights = 0, oidx = 0;
-			int32 type_p = 0, type_t = 0, type_n = 0, type_j = 0, type_w = 0, type_i = 0;
-			int32 stride_p = 0, stride_t = 0, stride_n = 0, stride_j = 0, stride_w = 0, stride_i = 0;
+			size_t opos, otex, onor, ojoints, oweights, oidx;
+			int32 type_p, type_t, type_n, type_j, type_w, type_i;
+			int32 stride_p, stride_t, stride_n, stride_j, stride_w, stride_i;
 
             //Meshes->Primitive->Accessor(p,i)->BufferView(p,i)->Buffer(p,i)
 			auto& bpos = *getBuffer(gm, pr, "POSITION", &opos, &stride_p, &type_p);        //type_p=5126(float)
@@ -1719,11 +1728,11 @@ bwt[1] = omp_get_wtime();
 						if (weights[tt] == 0) continue;
 
 //Meshes->Primitive->Target->POSITION->Accessor(p,i)->BufferView(p,i)->Buffer(p,i)
-						int32 offsetpos, offsetnor;
-						auto& mtpos = *getBuffer(gm, pr, tt, "POSITION", &offsetpos, &stride_p, &type_p);
-						auto& mtnor = *getBuffer(gm, pr, tt, "NORMAL", &offsetnor, &stride_n, &type_n);
-                        float* spos = (float*)&mtpos.data.at(vv * stride_p + offsetpos);
-                        float* snor = (float*)&mtnor.data.at(vv * stride_n + offsetnor);
+						size_t opos, onor;
+						auto& mtpos = *getBuffer(gm, pr, tt, "POSITION", &opos, &stride_p, &type_p);
+						auto& mtnor = *getBuffer(gm, pr, tt, "NORMAL", &onor, &stride_n, &type_n);
+                        float* spos = (float*)&mtpos.data.at(vv * stride_p + opos);
+                        float* snor = (float*)&mtnor.data.at(vv * stride_n + onor);
 						Float3 shapepos = Float3(spos[0], spos[1], spos[2]);
                         Float3 shapenor = Float3(snor[0], snor[1], snor[2]);
 						mv.pos += shapepos * weights[tt];
@@ -2001,5 +2010,113 @@ int32 th = omp_get_thread_num();
         if ( currentFrame >= anime.Frames.size() ) currentFrame = 0;
         // else if ( currentFrame < 0) currentFrame = anime.Frames.size() + currentFrame;
     }
+
+
+	void drawString(String text, float radius=100, float kerning = 10, ColorF color = Palette::White,
+		int32 istart = 0, float icount = 0)
+	{
+		if ( 0 == noaModel.Meshes.size()) return;
+		//                           0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+		const uint8 CODEMAP[256] =  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //00 
+									 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //10 
+									 0,35,36,37,38,39,40,41,42,43,53,55,60,47,61,93, //20  !"#$
+									25,26,27,28,29,30,34,31,32,33,94,54,58,44,59,56, //30 01234
+									64,90, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13, //40 @ABCD
+									14,15,16,17,18,19,20,21,22,23,24,62,49,63,48,57, //50 PQRST
+									50,91,65,66,67,68,69,70,71,72,73,74,75,76,77,78, //60 'abcd
+									79,80,81,82,83,84,85,86,87,88,89,90,51,46,52,45, //70 pqrst
+									 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //80 
+									 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //90 
+									 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //A0 
+									 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //B0 
+									 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //C0 
+									 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //D0 
+									 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //E0 
+									 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};//F0 
+
+		text += U" ";   //始端と終端の筆順表現が難しいので終端に空白挿入で対応
+
+		bool isall = false;
+		if (icount < 0)  //icountが負の場合は全体筆順表現
+		{
+			icount = -icount;
+			isall = true;
+		}
+
+		icount = (icount > text.size() ) ? text.size() : icount;
+		int32 start = (istart > text.size()) ? text.size() : istart;
+		start += 2;             //文:<文字列>
+		size_t len = icount;
+		float  stroke = icount - (uint32)icount;
+		len = ((start + len) > text.size()) ? text.size() : start + len;
+		Float3 pos = lPos;
+
+		if (text.substr(0, 1) == U"線")
+		{
+			__m128 rot = XMQuaternionRotationRollPitchYaw(ToRadians(eRot.x), ToRadians(eRot.y), ToRadians(eRot.z));
+			Mat4x4 mrot = Mat4x4(Quaternion(rot)*qRot);
+			Mat4x4 mat = Mat4x4::Identity().Scale(Float3{ -lSca.x,lSca.y,lSca.z }) * mrot ;        
+
+			Float3 f3 = Mat4x4(qRot).transformPoint(Float3( kerning, 0, 0));
+
+			for (int32 i = start; i < len; i++)
+			{
+				uint8 ascii = text.substr(i, 1).narrow().c_str()[0];
+				const uint8& code = CODEMAP[ascii];
+
+				if ( ascii == ' ')
+				{
+					pos += f3;
+					continue;
+				}
+
+				if (isall)
+				{
+					auto count = noaModel.Meshes[code].num_triangles();
+					count = count * stroke ;
+					noaModel.Meshes[code].drawSubset( 0, count, mat.translated(pos), color );
+					pos += f3;
+				}
+				else
+				{
+					if (i < (len - 1))
+					{
+						noaModel.Meshes[code].draw( mat.translated(pos), color );
+						pos += f3;
+					}
+					else noaModel.Meshes[code].drawSubset( 0, noaModel.Meshes[code].num_triangles() * stroke, mat.translated(pos), color );
+				}
+			}
+		}
+
+		else if (text.substr(0, 1) == U"円")
+		{
+			for (int32 i = start; i < len; i++)
+			{
+				uint8 ascii = text.substr(i, 1).narrow().c_str()[0];
+				const uint8& code = CODEMAP[ascii];
+
+				if ( ascii == ' ') continue;
+
+				Quaternion q0001 = Quaternion::Identity();
+				Quaternion r = q0001.RollPitchYaw(ToRadians(0),ToRadians(i * kerning), ToRadians(0) );//向き
+				Float3 tt = r * Vec3(radius, 0, 0);                                      //座標
+				Mat4x4 mat = Mat4x4::Identity().rotated(r.RollPitchYaw(ToRadians(-90),ToRadians(90),ToRadians(-90))).scaled(lSca).translated(lPos+tt);        
+
+				if (isall)
+				{
+					size_t count = noaModel.Meshes[code].num_triangles();
+					noaModel.Meshes[code].drawSubset(0, count*stroke, mat, color);
+				}
+				else
+				{
+					if (i < (len - 1))
+						noaModel.Meshes[code].draw( mat.translated(pos), color);
+					else
+						noaModel.Meshes[code].drawSubset(0, noaModel.Meshes[code].num_triangles() * stroke, mat, color);
+				}
+			}
+		}
+	}
 };
 
