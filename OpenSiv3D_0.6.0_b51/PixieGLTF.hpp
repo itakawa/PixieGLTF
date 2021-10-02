@@ -90,7 +90,7 @@ struct MorphMesh
     Array<Array<Vertex3D>>	BasisBuffers;  // モーフ基本形状のコピー	[プリミティブ番号][メッシュの頂点番号]
 	//※モーフ可能なメッシュはノード1つ固定の制約(プリミティブは複数)
 
-    uint32                   TexCoordCount=0;	// モーフ有メッシュのUV座標数(aniModel用)
+    uint32                   TexCoordCount;// モーフ有メッシュのUV座標数(aniModel用)
     Array<Float2>            TexCoord;			// モーフ有メッシュのUV座標(aniModel用)
 };
 
@@ -98,11 +98,13 @@ struct MorphMesh
 struct MorphTargetInfo
 {
     float Speed=1.0 ;			// モーフ速度
-    float CntSpeed=0.0 ;		// モーフ速度制御カウント(>1.0で更新)
+    float NowSpeed=0.0 ;		// モーフ速度制御カウント(>1.0で更新)
     int32 NowTarget=0 ;			// モーフターゲット(現在)  無効-1、通常0～
-    int32 DstTarget=0 ;			// モーフターゲット(遷移先)通常-1、設定あれば0～
-    int32 IndexTrans=-1 ;		// 遷移カウント、通常-1、遷移中0～
+    int32 DstTarget=0 ;			// モーフターゲット(遷移先)通常-1、設定あれば遷移中0～
+    int32 IndexTrans=-1 ;		// 遷移カウント、マニュアルモーフ-1、遷移中0～
 	Array<float> WeightTrans;	// 遷移ウェイトテーブル、-1か100％で終端
+
+	float Weight;				// 通常
 };
 
 struct AnimeModel
@@ -140,7 +142,8 @@ struct VRMModel
 
 
 enum MODELTYPE { MODELNOA, MODELANI, MODELVRM };
-constexpr uint32 NUMMIX = 3;				// TODO 3個制限は不要→全部に
+enum USE { USE_MORPH=1, NOTUSE_MORPH,
+		   USE_DEBUG, NOTUSE_DEBUG };
 
 class PixieGLTF
 {
@@ -201,7 +204,7 @@ public:
         morphID = morph;
     }
 
-    void initModel( MODELTYPE modeltype,bool debug=false, uint32 cycleframe = 60, int32 animeid=0)
+    void initModel( MODELTYPE modeltype, USE morph=NOTUSE_MORPH, USE debug=NOTUSE_DEBUG, uint32 cycleframe = 60, int32 animeid=0)
     {
         //指定されたglTFファイルを取得
         std::string err, warn;
@@ -215,19 +218,24 @@ public:
 		if (result && modeltype == MODELNOA)
 		{
 			gltfSetupNOA();
-			obbDebug = debug;
+			obbDebug = (debug == USE_DEBUG) ;
 		}
 
 		else if (result && modeltype == MODELANI)
 		{
 			gltfSetupANI(MODELANI, aniModel, gltfModel, cycleframe, animeid);
-			obbDebug = debug;
+			obbDebug = (debug == USE_DEBUG) ;
 		}
 
 		else if (result && modeltype == MODELVRM)
 		{
 			gltfSetupVRM();
-			obbDebug = debug;
+			obbDebug = (debug == USE_DEBUG) ;
+		}
+
+		if ( morph == NOTUSE_MORPH )	//モーフィングなし
+		{
+			morphTargetInfo.clear();
 		}
 
 		//初期状態のカメラ、視点、注視点はY軸方向に+10の位置
@@ -339,9 +347,6 @@ public:
         modelType = MODELNOA;
 		nodeParams.resize( gltfModel.nodes.size() );
 
-		const MorphTargetInfo mti{1.0, 0.0, 0,0,-1,{ 0,-1 } };
-		morphTargetInfo.resize( NUMMIX, mti );
-
 		for (int32 nn = 0; nn < gltfModel.nodes.size(); nn++)
 			gltfSetupPosture( gltfModel, nn, nodeParams );
 
@@ -387,6 +392,10 @@ public:
 			gltfSetupMorph( node, noaModel.morphMesh);
 			gltfSetupNOA( node, nn, Joints );
 		}
+
+		//                        spd  cnt  now dst idx  weight
+		const MorphTargetInfo mti{1.0, 0.0, 0,  0,  -1, { 0, 1 } };
+		morphTargetInfo.resize( noaModel.morphMesh.ShapeBuffers.size(), mti );
 
         //頂点の最大最小からサイズを計算してOBBを設定
         Float3 vmin = { FLT_MAX,FLT_MAX,FLT_MAX };
@@ -436,7 +445,7 @@ public:
 			meshidx = 0;
 		}
 
-		Array<Vertex3D> morphmv;
+		auto& weights = gltfModel.meshes[node.mesh].weights ;
 		int32 prsize = gltfModel.meshes[node.mesh].primitives.size();
         for (int32 pp = 0; pp < prsize; pp++)
         {
@@ -448,45 +457,13 @@ public:
             int32 type_p,type_t,type_n,type_j,type_w,type_i;
 			int32 stride_p, stride_t, stride_n, stride_j, stride_w, stride_i;
 
-            //Meshes->Primitive->Accessor(p,i)->BufferView(p,i)->Buffer(p,i)
+//Meshes->Primitive->Accessor(p,i)->BufferView(p,i)->Buffer(p,i)
 			auto& bpos = *getBuffer(gltfModel, pr, "POSITION", &opos, &stride_p, &type_p);        //type_p=5126(float)
 			auto& btex = *getBuffer(gltfModel, pr, "TEXCOORD_0", &otex, &stride_t, &type_t);	  //type_t=5126(float)
 			auto& bnormal = *getBuffer(gltfModel, pr, "NORMAL", &onor, &stride_n, &type_n);       //type_n=5126(float)
 			auto& bjoint = *getBuffer(gltfModel, pr, "JOINTS_0", &ojoints, &stride_j, &type_j);   //type_j=5121(uint8)/5123(uint16)
 			auto& bweight = *getBuffer(gltfModel, pr, "WEIGHTS_0", &oweights, &stride_w, &type_w);//type_n=5126(float)
 			auto& bidx = *getBuffer(gltfModel, pr, &oidx, &stride_i, &type_i);                    //type_j=5123(uint16)
-
-			//プリミティブがモーフ有なら先にでっちあげとく
-			if ( pr.targets.size() > 0 && noaModel.morphMesh.BasisBuffers.size() )  //モーフあり
-			{
-				morphmv = noaModel.morphMesh.BasisBuffers[morphidx];
-				Array<Array<Vertex3D>>& buf = noaModel.morphMesh.ShapeBuffers;
-				for (int32 ii = 0; ii < morphmv.size(); ii++)	//顔の全ての頂点
-				{
-					//この方式は、かならず1/0になるから0.3みたいな微妙な表情ができないな。
-					for (int32 iii = 0; iii < NUMMIX; iii++)	//4chモーフ合成(目、口、表情を非同期で動かす)
-					{
-						int32& now = morphTargetInfo[iii].NowTarget;
-						int32& dst = morphTargetInfo[iii].DstTarget;
-						int32& idx = morphTargetInfo[iii].IndexTrans;
-						Array<float>& wt = morphTargetInfo[iii].WeightTrans;
-
-						if (now == -1) continue;   //NowTargetが-1の場合はモーフ無効
-						if (idx == -1)             //IndexTransが-1の場合はWeightTrans[0]でマニュアルウェイト
-						{
-							morphmv[ii].pos += buf[morphidx * NUMMIX + iii][ii].pos * (1 - wt[0]) + buf[morphidx * NUMMIX + iii][ii].pos * wt[0];
-							morphmv[ii].normal += buf[morphidx * NUMMIX + iii][ii].normal * (1 - wt[0]) + buf[morphidx * NUMMIX + iii][ii].normal * wt[0];
-						}
-						else
-						{
-							float weight = (wt[idx] < 0) ? 0 : wt[idx];
-							morphmv[ii].pos += buf[morphidx * NUMMIX + now][ii].pos * (1 - weight) + buf[morphidx * NUMMIX + dst][ii].pos * weight;
-							morphmv[ii].normal += buf[morphidx * NUMMIX + now][ii].normal * (1 - weight) + buf[morphidx * NUMMIX + dst][ii].normal * weight;
-						}
-					}
-				}
-				morphidx++;
-			}
 
             //頂点座標を生成
             Array<Vertex3D> vertices;
@@ -498,10 +475,29 @@ public:
 				float* basisnor = (float*)&bnormal.data.at(vv * stride_n + onor);
 
 				mv.pos = Float3{ basispos[0], basispos[1], basispos[2] }; //モーフなし glTFから座標とってくる
-				if ( pr.targets.size() > 0 && morphmv ) mv = morphmv[vv]; //モーフあり モーフの座標とってくる
-
 				mv.tex = Float2(basistex[0], basistex[1]);
 				mv.normal = Float3(basisnor[0], basisnor[1], basisnor[2]);
+
+				// 全てのモーフを合成は大変だけど0は合成の必要なくて実質多くても
+				// ２、３個しか合成しないのでたくさんあっても負荷は大したことない
+				if ( pr.targets.size() && weights.size() )
+				{
+					for (int32 tt = 0; tt < weights.size(); tt++)
+					{
+						if (weights[tt] == 0) continue;
+
+// Meshes->Primitive->Target->POSITION->Accessor(p,i)->BufferView(p,i)->Buffer(p,i)
+						size_t opos, onor;
+						auto& mtpos = *getBuffer(gltfModel, pr, tt, "POSITION", &opos, &stride_p, &type_p);
+						auto& mtnor = *getBuffer(gltfModel, pr, tt, "NORMAL", &onor, &stride_n, &type_n);
+						float* spos = (float*)&mtpos.data.at(vv * stride_p + opos);
+						float* snor = (float*)&mtnor.data.at(vv * stride_n + onor);
+						Float3 shapepos = Float3(spos[0], spos[1], spos[2]);
+						Float3 shapenor = Float3(snor[0], snor[1], snor[2]);
+						mv.pos += shapepos * weights[tt];
+						mv.normal += shapenor * weights[tt];
+					}
+				}
 
 				//基本姿勢適用
 				Mat4x4 matlocal = nodeParams[nodeidx].matLocal;
@@ -644,7 +640,7 @@ public:
                 auto basispos = getBuffer(gltfModel, pr, "POSITION", &offsetpos, &stride, &type_p);
                 auto basisnor = getBuffer(gltfModel, pr, "NORMAL", &offsetnor, &stride, &type_n);
 
-                //元メッシュ(basis)の頂点座標バッファを生成
+                //元メッシュ(morphmesh)の頂点座標バッファを生成
                 Array<Vertex3D> basisvertices;
                 auto& numvertex = gltfModel.accessors[pr.attributes["POSITION"]].count; //元メッシュの頂点/法線数
                 for (int32 vv = 0; vv < numvertex; vv++)
@@ -740,17 +736,6 @@ public:
 			}
 		}
 
-		//モーフ設定を準備
-		MorphTargetInfo mti;
-		mti.Speed = 1.0;
-		mti.CntSpeed = 0;
-		mti.NowTarget = 0;
-		mti.DstTarget = 0;
-		mti.Speed = 1.0;
-		mti.IndexTrans = -1;
-		mti.WeightTrans = { 0,-1 };
-		for (int32 i = 0; i < NUMMIX; i++) morphTargetInfo << mti;
-
 		//1次処理を進められるとこまで
 		for (uint32 nn = 0; nn < gltfModel.nodes.size(); nn++)
 		{
@@ -758,6 +743,11 @@ public:
 			gltfSetupMorph(node, vrmModel.morphMesh);
 			gltfSetupVRM(node, nn);
 		}
+
+		//モーフ設定を準備
+		//                        spd  cnt  now dst idx  weight
+		const MorphTargetInfo mti{1.0, 0.0, 0,  0,  -1, { 0, 1 } };
+		morphTargetInfo.resize( vrmModel.morphMesh.ShapeBuffers.size(), mti );
 
 		register1st = true;	//初回登録済
 	}
@@ -857,10 +847,11 @@ public:
 			{
 				morphmv = vrmModel.morphMesh.BasisBuffers[morphidx];
 				Array<Array<Vertex3D>>& buf = vrmModel.morphMesh.ShapeBuffers;
+				const int32 NMORPH = buf.size();
 				for (int32 ii = 0; ii < morphmv.size(); ii++)	//顔の全ての頂点
 				{
 					//TODO この方式は、かならず1/0になるから0.3みたいな微妙な表情ができない。
-					for (int32 iii = 0; iii < NUMMIX; iii++)	//4chモーフ合成(目、口、表情を非同期で動かす)
+					for (int32 iii = 0; iii < morphTargetInfo.size(); iii++)	//モーフ合成
 					{
 						int32& now = morphTargetInfo[iii].NowTarget;
 						int32& dst = morphTargetInfo[iii].DstTarget;
@@ -870,14 +861,18 @@ public:
 						if (now == -1) continue;   //NowTargetが-1の場合はモーフ無効
 						if (idx == -1)             //IndexTransが-1の場合はWeightTrans[0]でマニュアルウェイト
 						{
-							morphmv[ii].pos += buf[morphidx * NUMMIX + iii][ii].pos * (1 - wt[0]) + buf[morphidx * NUMMIX + iii][ii].pos * wt[0];
-							morphmv[ii].normal += buf[morphidx * NUMMIX + iii][ii].normal * (1 - wt[0]) + buf[morphidx * NUMMIX + iii][ii].normal * wt[0];
+							morphmv[ii].pos += buf[morphidx * NMORPH + iii][ii].pos * (1 - wt[0]) +
+								               buf[morphidx * NMORPH + iii][ii].pos * wt[0];
+							morphmv[ii].normal += buf[morphidx * NMORPH + iii][ii].normal * (1 - wt[0]) +
+								                  buf[morphidx * NMORPH + iii][ii].normal * wt[0];
 						}
 						else
 						{
 							float weight = (wt[idx] < 0) ? 0 : wt[idx];
-							morphmv[ii].pos += buf[morphidx * NUMMIX + now][ii].pos * (1 - weight) + buf[morphidx * NUMMIX + dst][ii].pos * weight;
-							morphmv[ii].normal += buf[morphidx * NUMMIX + now][ii].normal * (1 - weight) + buf[morphidx * NUMMIX + dst][ii].normal * weight;
+							morphmv[ii].pos += buf[morphidx * NMORPH + now][ii].pos * (1 - weight) +
+								               buf[morphidx * NMORPH + dst][ii].pos * weight;
+							morphmv[ii].normal += buf[morphidx * NMORPH + now][ii].normal * (1 - weight) +
+								                  buf[morphidx * NMORPH + dst][ii].normal * weight;
 						}
 					}
 				}
@@ -1087,53 +1082,49 @@ public:
         __m128 rot = XMQuaternionRotationRollPitchYaw(ToRadians(eRot.x), ToRadians(eRot.y), ToRadians(eRot.z));
         Mat4x4 mrot =  Mat4x4(Quaternion(rot)*qRot);
 
-        Float3 t = lPos + rPos;
+        Float3 tra = lPos + rPos;
 
 //GL系メッシュをDX系で描画時はXミラーして逆カリング
 		//Mat4x4 mat = Mat4x4::Identity().scaled(lSca) * mrot * Mat4x4::Identity().translated(t) ;
-		Mat4x4 mat = Mat4x4::Identity().Scale(Float3{ -lSca.x,lSca.y,lSca.z }) * mrot * Mat4x4::Identity().Translate(t);        
+		Mat4x4 mat = Mat4x4::Identity().Scale(Float3{ -lSca.x,lSca.y,lSca.z }) * mrot * Mat4x4::Identity().Translate(tra);        
 
 		for (uint32 i = 0; i < noa.Meshes.size(); i++)
         {
-
-//glTFノードを精査していき、モーフターゲットがあるメッシュはモーフィング100％のVertexを別途保存
-
-//モーフィングは4種
-// 固定メッシュ(NOA)、アニメメッシュ(ANI)に対して、モーフィング対応メッシュ部分だけをすげ替えて描画する。
-// モーフィングのパターンは瞬き(BLINKタイプ)と遷移(TRANSITIONタイプ)とがあり、状態遷移の管理を要する。
-// 表情の場合最低限、4chの合成ができる必要ある。(EYE/MOUTH/TOOTH/FACIAL)※TOOTHとFACIALはTRANSITIONタイプ
-			int32 morphs = 0;
-			if ( noa.morphMesh.Targets.size() ) morphs = noa.morphMesh.Targets[i];
-			if ( morphs > 0 )  //モーフあり
+#if 1
+            const Array<Array<Vertex3D>>& shapebuf = noa.morphMesh.ShapeBuffers;
+			const int32 NMORPH = shapebuf.size();
+			if ( morphTargetInfo.size() )  //モーフあり
             {
                 Array<Vertex3D> morphmv = noa.morphMesh.BasisBuffers[morphidx]; //元メッシュのコピーを作業用で確保
-                Array<Array<Vertex3D>>& buf = noa.morphMesh.ShapeBuffers;
 
                 for (int32 ii = 0; ii < morphmv.size(); ii++)	//頂点
                 {
-                    for (int32 iii = 0; iii <NUMMIX ; iii++)   //4chモーフ合成(目、口、歯、表情を非同期で動かす)
+                    for ( int32 iii = 0; iii <morphTargetInfo.size() ; iii++)   //モーフ数
                     {
-                        int32& now = morphTargetInfo[iii].NowTarget;
-                        int32& dst = morphTargetInfo[iii].DstTarget;
-                        int32& idx = morphTargetInfo[iii].IndexTrans;
-                        Array<float>& wt = morphTargetInfo[iii].WeightTrans;
+                        const int32& now = morphTargetInfo[iii].NowTarget;
+                        const int32& dst = morphTargetInfo[iii].DstTarget;
+                        const int32& idx = morphTargetInfo[iii].IndexTrans;
+                        const Array<float>& wt = morphTargetInfo[iii].WeightTrans;
 
                         if (now == -1) continue;   //NowTargetが-1の場合はモーフ無効
-                        if (idx == -1)             //IndexTransが-1の場合はWeightTrans[0]でマニュアルウェイト
+
+                        if (idx == -1)             //TODO IndexTransが-1の場合はWeightTrans[0]でマニュアルウェイトにしたい
                         {
-                            Array<float> weight = morphTargetInfo[BASIS].WeightTrans;
-                            morphmv[ii].pos += buf[morphidx * NUMMIX + iii][ii].pos * (1 - wt[0]) + buf[morphidx * NUMMIX + iii][ii].pos * wt[0];
-                            morphmv[ii].normal += buf[morphidx * NUMMIX + iii][ii].normal * (1 - wt[0]) + buf[morphidx * NUMMIX + iii][ii].normal * wt[0];
                         }
                         else
                         {
-                            float weight = (wt[idx] < 0) ? 0 : wt[idx];
-                            morphmv[ii].pos += buf[morphidx * NUMMIX + now][ii].pos * (1 - weight) + buf[morphidx * NUMMIX + dst][ii].pos * weight;
-                            morphmv[ii].normal += buf[morphidx * NUMMIX + now][ii].normal * (1 - weight) + buf[morphidx * NUMMIX + dst][ii].normal * weight;
+							auto& posnow = shapebuf[morphidx * NMORPH + now][ii].pos;
+							auto& posdst = shapebuf[morphidx * NMORPH + dst][ii].pos;
+							auto& normalnow = shapebuf[morphidx * NMORPH + now][ii].normal;
+							auto& normaldst = shapebuf[morphidx * NMORPH + dst][ii].normal;
+							float weight = (wt[idx] < 0) ? 0 : wt[idx];
+
+							morphmv[ii].pos += posnow * (1 - weight) + posdst *  weight;
+							morphmv[ii].normal += normalnow * (1 - weight) + normaldst *  weight;
                         }
                     }
 
-					Mat4x4& matskin = noa.morphMatBuffers[i];
+					Mat4x4& matskin = noa.morphMatBuffers[ii];
                     SIMD_Float4 vec4pos = DirectX::XMVector4Transform(SIMD_Float4(morphmv[ii].pos, 1.0f), matskin);
                     Mat4x4 matnor = matskin.inverse().transposed();
 
@@ -1145,7 +1136,7 @@ public:
 				noa.Meshes[i].fill(morphmv);				//頂点座標を再計算後にすげ替え
                 morphidx++;
             }
-
+#endif
 			if (istart == NOTUSE)	//部分描画なし
 			{
 				if (noa.useTex[i])	//テクスチャ色
@@ -1256,11 +1247,13 @@ public:
 				{
 					if (ac[cc].numMorph)
 					{
-						ac[cc].deltaKeyframes[ff].second.resize(ac[cc].numMorph); bufsize += ac[cc].numMorph * sizeof(ac[cc].deltaKeyframes[ff].second);
+						ac[cc].deltaKeyframes[ff].second.resize(ac[cc].numMorph);
+						bufsize += ac[cc].numMorph * sizeof(ac[cc].deltaKeyframes[ff].second);
 					}
 					else
 					{
-						ac[cc].deltaKeyframes[ff].second.resize(4);                bufsize += 4;
+						ac[cc].deltaKeyframes[ff].second.resize(4);
+						bufsize += 4;
 					}
 				}
 			}
@@ -1921,10 +1914,10 @@ int32 th = omp_get_thread_num();
             {
                 Array<Vertex3D> morphmv = ani.morphMesh.BasisBuffers[morphidx]; //元メッシュのコピーを作業用で確保
                 Array<Array<Vertex3D>>& buf = ani.morphMesh.ShapeBuffers;
-
-                for (uint32 ii = 0; ii < morphmv.size(); ii++)
+				const int32 NMORPH = buf.size();
+                for (int32 ii = 0; ii < morphmv.size(); ii++)
                 {
-                    for (uint32 iii = 0; iii < NUMMIX; iii++)   //4chモーフ合成(目、口、歯、表情を非同期で動かす)
+                    for (int32 iii = 0; iii < morphTargetInfo.size(); iii++)   //4chモーフ合成(目、口、歯、表情を非同期で動かす)
                     {
                         int32& now = morphTargetInfo[iii].NowTarget;
                         int32& dst = morphTargetInfo[iii].DstTarget;
@@ -1935,19 +1928,19 @@ int32 th = omp_get_thread_num();
 
                         if (idx == -1)              //IndexTransが-1の場合はWeightTrans[0]でマニュアルウェイト
                         {
-                            morphmv[ii].pos += buf[morphidx * NUMMIX + iii][ii].pos * (1 - wt[0]) +
-                                               buf[morphidx * NUMMIX + iii][ii].pos * wt[0];
-                            morphmv[ii].normal += buf[morphidx * NUMMIX + iii][ii].normal * (1 - wt[0]) +
-                                                  buf[morphidx * NUMMIX + iii][ii].normal * wt[0];
+                            morphmv[ii].pos += buf[morphidx * NMORPH + iii][ii].pos * (1 - wt[0]) +
+                                               buf[morphidx * NMORPH + iii][ii].pos * wt[0];
+                            morphmv[ii].normal += buf[morphidx * NMORPH + iii][ii].normal * (1 - wt[0]) +
+                                                  buf[morphidx * NMORPH + iii][ii].normal * wt[0];
                         }
 
 						else						//マニュアルウェイト以外(ウェイトテーブルによるブリンクと表情遷移)
                         {
-                            auto weight = (wt[idx] < 0) ? 0 : wt[idx];
-                            morphmv[ii].pos += buf[morphidx * NUMMIX + now][ii].pos * (1 - weight) +
-                                               buf[morphidx * NUMMIX + dst][ii].pos * weight;
-                            morphmv[ii].normal += buf[morphidx * NUMMIX + now][ii].normal * (1 - weight) +
-                                                  buf[morphidx * NUMMIX + dst][ii].normal * weight;
+                            float weight = (wt[idx] < 0) ? 0 : wt[idx];
+                            morphmv[ii].pos += buf[morphidx * NMORPH + now][ii].pos * (1 - weight) +
+                                               buf[morphidx * NMORPH + dst][ii].pos * weight;
+                            morphmv[ii].normal += buf[morphidx * NMORPH + now][ii].normal * (1 - weight) +
+                                                  buf[morphidx * NMORPH + dst][ii].normal * weight;
                         }
                     }
 

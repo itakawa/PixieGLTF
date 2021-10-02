@@ -122,7 +122,8 @@ void InitGltf()
 	meshCam =   PixieGLTF(U"Camera.glb", Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
     meshGnd =   PixieGLTF(U"TF2.002.glb", Float3{ 40, 0, -50 }, Float3{ 10, 10, 10 }, Float3{ 0, 90, 0 }, Float3{ 0, 0, 0 });
     meshMarkA = PixieGLTF(U"Sinobu.016A860.glb",Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
-    meshMarkS = PixieGLTF(U"Sinobu.012.glb",Float3{ 2, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
+    meshMarkS = PixieGLTF(U"Tatumi.002.glb",Float3{ 2, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 180, 0 }, Float3{ 0, 0, 0 });
+//    meshMarkS = PixieGLTF(U"untitled.glb",Float3{ 2, 0, 0 }, Float3{ 0.1, 0.1, 0.1 }, Float3{ 90, 0, 0 }, Float3{ 0, 0, 0 });
     meshMarkF = PixieGLTF(U"Triangle.glb",Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
 
 	//　オブジェクト生成  フォントファイル	座標lPos(0,0,0)　 拡縮率lSca(x2,x2,x2)   オイラーPYR角eRot	　相対座標rPos(0,0,0)              																	
@@ -149,7 +150,7 @@ MillisecClock ms0;
 		meshGnd.initModel(MODELTYPE::MODELNOA); 
 		meshMarkS.initModel(MODELTYPE::MODELNOA); 
 		meshMarkF.initModel(MODELTYPE::MODELNOA); 
-		meshVRM.initModel(MODELTYPE::MODELVRM);
+		meshVRM.initModel(MODELTYPE::MODELVRM, USE_MORPH);
 		meshCUI.initModel(MODELTYPE::MODELNOA);
 
 #else	//スレッド並列(少し早い？)
@@ -209,7 +210,8 @@ LOG_INFO( U"ワーカースレッド処理時間＝{}ms"_fmt(ms0.ms()) ); // ロ
 
 
 //アニメ生成は内部でOMP使う
-//	std::thread th = std::thread{ [&] {meshMarkA.initModel(MODELTYPE::MODELANI, false, 860, 0); } };	th.join();
+//	std::thread th = std::thread{ [&] {meshMarkA.initModel(MODELANI, NOTUSE_MORPH, NOTUSE_DEBUG, 860, 0); } };	th.join();
+//	std::thread th = std::thread{ [&] {meshMarkS.initModel(MODELANI, NOTUSE_MORPH, NOTUSE_DEBUG, 106, 0); } };	th.join();
 
 	boneHead_01 = meshVRM.gltfGetJoint( U"Head_01" );
 	boneNeck_01 = meshVRM.gltfGetJoint( U"Neck_01" );
@@ -239,15 +241,15 @@ Float4 eyePosR   = { -5, 0, -0.6, 0};
 Float3 focusPosR = { -5, 0, -0.4 };
 
 // ウィンドウサイズ
-Rect rectWindow = { 0, 0, 1900, 1000 };
+Rect rectWindow = { 0, 0, 1280, 768 };
 Float4 eyePosGUI   = { 0, +50, 0, 0}; //視点 XYZは座標、Wはロール(オイラー角)を格納
 Float3 focusPosGUI = { 0,   0, 0.001 };//注視点 ※TODO：視点-注視点が軸平行でVP変換すると頂点座標が全部中心に収束してしまい表示されない
 
-Rect rectCUI = { 0, 0, 1900, 1000 };
+Rect rectCUI = { 0, 0, 1280, 768 };
 Float4 eyePosCUI   = { 77,272, 80.000, 0};
 Float3 focusPosCUI = { 77,222, 80.001};
 
-Rect rectVRM = { -750, 250, 1900, 1000 };
+Rect rectVRM = { -480, 200, 1280, 768 };
 Float4 eyePosVRM   = { 0, +10, +20, 0}; 
 Float3 focusPosVRM = { 0, +10, 0};
 
@@ -421,7 +423,7 @@ void Draw( const PixieCamera &cam, Timeline &timeline )
 {
 		const ScopedRenderStates3D sr3{ SamplerState::RepeatAniso, RasterizerState::SolidCullFront };
 
-//        meshGnd.drawMesh();
+        meshGnd.drawMesh();
 
 //        drawGrid( cam );                    // GRIDを描画
 
@@ -429,7 +431,16 @@ void Draw( const PixieCamera &cam, Timeline &timeline )
         drawPosline( cameraGUI, timeline, 0, PRB_CAM,  U"\xF0104" );	        //Camera-R
         drawPosline( cameraGUI, timeline, 0, PRB_FOCUS,U"\xF0E96" );            //Focus-R
 
-//        meshMarkS.drawMesh();
+		if (meshMarkS.modelType == MODELANI)
+		{
+			static int32 cnt = 0;
+			meshMarkS.drawAnime();
+//			if ((++cnt&15)==0)
+				meshMarkS.nextFrame(0);
+		}
+        else meshMarkS.drawMesh();
+
+
 //        meshMarkF.drawMesh();
 //        meshBB.drawMesh();
 
@@ -439,32 +450,6 @@ void Draw( const PixieCamera &cam, Timeline &timeline )
 
 		//                     円形文字列                  半径 カーニング  色 開始文字 文字数
 		meshCUI.drawString(U"円:ABCDEFGHIJKLMNOPQRSTUVWXYZ", 30, 10, ColorF{ 1 }, 0, 26);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -600,8 +585,10 @@ Array<float> WEIGHTBLINK =
 
 void setFacial(int32 morphch, PixieGLTF &pg, int32 mtstate, float speed, Array<float> weighttable)
 {
+	if (pg.morphTargetInfo.size() <= morphch) return ;
+
     auto& spd = pg.morphTargetInfo[morphch].Speed;
-    auto& cnt = pg.morphTargetInfo[morphch].CntSpeed;
+    auto& cnt = pg.morphTargetInfo[morphch].NowSpeed;
     auto& now = pg.morphTargetInfo[morphch].NowTarget;
     auto& dst = pg.morphTargetInfo[morphch].DstTarget;
     auto& idx = pg.morphTargetInfo[morphch].IndexTrans;
@@ -625,7 +612,8 @@ void updateFacial()
 {
     float morphspd = 1.0;
 	if (Key0.pressed()) setFacial(FACIAL, meshVRM, 0,  morphspd, WEIGHTTRANSITION);
-	if (Key1.pressed()) setFacial(MOUTH,  meshVRM, 1,  morphspd, WEIGHTBLINK);
+	if (Key1.pressed())
+		setFacial(MOUTH,  meshVRM, 1,  morphspd, WEIGHTBLINK);
 	if (Key2.pressed()) setFacial(MOUTH,  meshVRM, 2,  morphspd, WEIGHTBLINK);
 	if (Key3.pressed()) setFacial(EYE,    meshVRM, 3,  morphspd, WEIGHTBLINK);
 	if (Key4.pressed()) setFacial(EYE,    meshVRM, 14, morphspd, WEIGHTBLINK);
@@ -646,7 +634,7 @@ void updateMorph(PixieGLTF &pg)
     for (uint32 ii = 0; ii < pg.morphTargetInfo.size(); ii++)
     {
         auto& spd = pg.morphTargetInfo[ii].Speed;
-        auto& cnt = pg.morphTargetInfo[ii].CntSpeed;
+        auto& cnt = pg.morphTargetInfo[ii].NowSpeed;
         auto& now = pg.morphTargetInfo[ii].NowTarget;
         auto& dst = pg.morphTargetInfo[ii].DstTarget;
         auto& idx = pg.morphTargetInfo[ii].IndexTrans;
@@ -966,18 +954,18 @@ void Main()
 	cameraGUI = PixieCamera(rectWindow, 45_deg, eyePosGUI.xyz(), focusPosGUI);
 
 	cameraVRM = PixieCamera(rectVRM, 45_deg, eyePosVRM.xyz(), focusPosVRM);
-    MSRenderTexture renderTextureVRM = { (unsigned)rectVRM.w, (unsigned)rectVRM.h,
+    RenderTexture renderTextureVRM = { (unsigned)rectVRM.w, (unsigned)rectVRM.h,
 		                                  TextureFormat::R8G8B8A8_Unorm_SRGB, HasDepth::Yes  }; // RT初期化
 
 	cameraCUI = PixieCamera(rectCUI, 45_deg, eyePosCUI.xyz(), focusPosCUI);
     MSRenderTexture renderTextureCUI = { (unsigned)rectCUI.w, (unsigned)rectCUI.h,
-		                                  TextureFormat::R8G8B8A8_Unorm_SRGB, HasDepth::Yes  }; // RT初期化
+		                                  TextureFormat::R8G8B8A8_Unorm_SRGB, HasDepth::Yes  }; // MSRT初期化
 
-    InitGltf();                                                                             // glTF初期化
+    InitGltf();																					// glTF初期化
     InitGUI();
 
     Timeline guiTimeline ;
-    InitTimeline( guiTimeline, Rect{10,700,1800,265} ); // タイムラインGUI初期化
+    InitTimeline( guiTimeline, Rect{10,500,1280,256} ); // タイムラインGUI初期化
 
     // アセット登録
     FontAsset::Register(U"fontT",30, U"TOD4UI-Regular.otf");
@@ -998,13 +986,15 @@ void Main()
 	{
 		//通常描画にカメラ指定
 		Graphics3D::SetCameraTransform(cameraGUI.getViewProj(), cameraGUI.getEyePosition());
-		Graphics3D::SetGlobalAmbientColor(ColorF{0.9});
+		Graphics3D::SetGlobalAmbientColor(ColorF{1.2});
+		Graphics3D::SetSunColor(ColorF{ 0.15 });
+
 		Update(guiTimeline);
 		updateMouse( meshGnd, focusPosGUI, eyePosGUI );
 
 		Draw( cameraGUI, guiTimeline );							//通常の描画
 
-//#define ENABLE_VTUBER
+#define ENABLE_VTUBER
 #ifdef ENABLE_VTUBER
 		//VRM描画にカメラ指定
 		Graphics3D::SetCameraTransform(cameraVRM.getViewProj(), cameraVRM.getEyePosition());
@@ -1025,6 +1015,7 @@ void Main()
 			}
 			webcamTex.draw();
 #endif
+			updateFacial();
 			updateMorph( meshVRM );
 
 			meshVRM.lPos.y = -15;
