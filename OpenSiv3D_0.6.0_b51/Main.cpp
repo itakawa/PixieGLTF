@@ -83,7 +83,7 @@ Vec3 guiTrack(const Font &font,const String &text, Rect &rectgui,GRABSTATE &grab
 //GLTFメッシュ初期化
 
 PixieGLTF meshArrow, meshXZ, meshXY, meshYZ, meshCam, meshGnd, meshStd, meshMarkA, meshMarkS,
-          meshMarkF, meshSP, meshVRM, meshGrid, meshCUI;
+          meshMarkF, meshSP, meshVRM, meshGrid, meshFont, meshTest;
 
 //可動ボーン
 int32 boneHead_01 = -1 ;
@@ -104,12 +104,32 @@ int32 boneLeg_L_02 = -1 ;
 int32 boneLeg_R_01 = -1 ;
 int32 boneLeg_R_02 = -1 ;
 
+void userDisplace( Array<Vertex3D> &vertices )
+{
+	float Height = 0.2;
+	float Width = 0.5;
+	float Time = 10;
+
+	static float t = 0;
+ 	t += Scene::DeltaTime()/5;
+	for (int32 i = 0; i < vertices.size(); i++)
+	{
+		auto& mv = vertices[i].pos;
+		float height = Height * (1.0 - abs(mv.x * 1.3)) * (1 - abs(mv.z * 1.3));
+		float r = sqrt( mv.xz().length() * mv.xz().length())*Time;
+		mv.y += height * sin((r - t) * 3.14159 * Width);
+	}
+}
+
 void InitGltf()
 {						//glTFファイル  座標               拡縮率(1=100%)     オイラー回転(RPY)  相対座標
 //  gltfTokyo = PixieGLTF(U"533945361_tokyo.glb",Float3{ 0, 0, 0 }, Float3{ 10, 10, 10 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
 //	gltfT19   = PixieGLTF(U"tutorial_19.glb",Float3{ 5, 0, 5 }, Float3{ 10, 10, 10 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
 //	gltfAtami = PixieGLTF(U"atami.glb",Float3{ 5, 0, 5 }, Float3{ 10, 10, 10 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
 //	gltfVRM =   PixieGLTF(U"Sinobu.011b.vrm", Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
+
+//	meshTest =  PixieGLTF(U"Grid100x100.glb", Float3{ 0, 1, 0 }, Float3{ 10, 10, 10 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
+//	meshTest =  PixieGLTF(U"TestDisplace.glb", Float3{ 0, 1, 0 }, Float3{ 10, 10, 10 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
 
 	meshGrid =  PixieGLTF(U"Grid.glb", Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
 	meshSP =    PixieGLTF(U"MarkSP.glb", Float3{ 0, 0, 0 }, Float3{ 5, 5, 5 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
@@ -127,7 +147,8 @@ void InitGltf()
     meshMarkF = PixieGLTF(U"Triangle.glb",Float3{ 0, 0, 0 }, Float3{ 1, 1, 1 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
 
 	//　オブジェクト生成  フォントファイル	座標lPos(0,0,0)　 拡縮率lSca(x2,x2,x2)   オイラーPYR角eRot	　相対座標rPos(0,0,0)              																	
-    meshCUI  = PixieGLTF(U"ToD4Font.glb",Float3{ 0, 0, 0 }, Float3{ 2, 2, 2 }, Float3{ 180, 0, 0 }, Float3{ 0, 0, 0 });
+//    meshFont  = PixieGLTF(U"ToD4Font.glb",Float3{ 0, 0, 0 }, Float3{ 2, 2, 2 }, Float3{ -90, 90, -90 }, Float3{ 0, 0, 0 });
+//    meshFont  = PixieGLTF(U"ToD4Font.glb",Float3{ 0, 0, 0 }, Float3{ 2, 2, 2 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
 
 	meshVRM =   PixieGLTF(U"Siv3DKun2.glb", Float3{ 0, 100, 0 }, Float3{ 20, 20, 20 }, Float3{ 0, 180, 0 }, Float3{ 0, 0, 0 });
 //	meshVRM =   PixieGLTF(U"Sinobu.013.vrm", Float3{ 0, 90, -50 }, Float3{ 30, 30, 30 }, Float3{ 0, 0, 0 }, Float3{ 0, 0, 0 });
@@ -140,18 +161,19 @@ void InitGltf()
 
 MillisecClock ms0;
 #if 1  //順次処理
-		meshGrid.initModel(MODELTYPE::MODELNOA); 
-		meshArrow.initModel(MODELTYPE::MODELNOA); 
-		meshSP.initModel(MODELTYPE::MODELNOA); 
-		meshXZ.initModel(MODELTYPE::MODELNOA); 
-		meshXY.initModel(MODELTYPE::MODELNOA); 
-		meshYZ.initModel(MODELTYPE::MODELNOA); 
-		meshCam.initModel(MODELTYPE::MODELNOA);
-		meshGnd.initModel(MODELTYPE::MODELNOA); 
-		meshMarkS.initModel(MODELTYPE::MODELNOA); 
-		meshMarkF.initModel(MODELTYPE::MODELNOA); 
-		meshVRM.initModel(MODELTYPE::MODELVRM, USE_MORPH);
-		meshCUI.initModel(MODELTYPE::MODELNOA);
+		meshGrid.initModel( MODELNOA); 
+		meshArrow.initModel( MODELNOA); 
+		meshSP.initModel( MODELNOA); 
+		meshXZ.initModel( MODELNOA); 
+		meshXY.initModel( MODELNOA); 
+		meshYZ.initModel( MODELNOA); 
+		meshCam.initModel( MODELNOA);
+		meshGnd.initModel( MODELNOA); 
+		meshMarkS.initModel( MODELNOA); 
+		meshMarkF.initModel( MODELNOA); 
+		meshVRM.initModel( MODELVRM);
+		meshFont.initModel( MODELNOA );
+//		meshTest.initModel( MODELNOA, NOTUSE_MORPH, userDisplace );
 
 #else	//スレッド並列(少し早い？)
 {
@@ -173,8 +195,6 @@ MillisecClock ms0;
 }
 #endif
 LOG_INFO( U"ワーカースレッド処理時間＝{}ms"_fmt(ms0.ms()) ); // ログ出力
-
-
 /*
 	{
 		//1000個のスタジアム(7万頂点)
@@ -424,8 +444,13 @@ void Draw( const PixieCamera &cam, Timeline &timeline )
 		const ScopedRenderStates3D sr3{ SamplerState::RepeatAniso, RasterizerState::SolidCullFront };
 
         meshGnd.drawMesh();
-
-//        drawGrid( cam );                    // GRIDを描画
+#if USE_TEST_DISPLACE
+		meshTest.eRot.y += 0.1;
+		meshTest.eRot.z += 0.1;
+		if (meshTest.eRot.y == 360) meshTest.eRot.y = 0;
+		if (meshTest.eRot.z == 360) meshTest.eRot.z = 0;
+        meshTest.drawMesh();
+#endif
 
         drawPosline( cameraGUI, timeline, 0, PRB_ACT,  U"\xF0A10", &meshMarkA );//Actor
         drawPosline( cameraGUI, timeline, 0, PRB_CAM,  U"\xF0104" );	        //Camera-R
@@ -449,10 +474,9 @@ void Draw( const PixieCamera &cam, Timeline &timeline )
         meshSP.drawMesh();
 
 		//                     円形文字列                  半径 カーニング  色 開始文字 文字数
-		meshCUI.drawString(U"円:ABCDEFGHIJKLMNOPQRSTUVWXYZ", 30, 10, ColorF{ 1 }, 0, 26);
-
-
-
+		meshFont.lPos.y = 1;
+		meshFont.eRot.y -= 1; 
+		meshFont.drawString(U"円:ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 30, 9, ColorF{1}, 0, 36);
 
 		//Colorの４番目の引数が透明度でないと、違和感すごい
 		const ColorF WHITE(1,1,1,USRCOLOR), RED(1,0.5,0.5,USRCOLOR),
@@ -496,8 +520,8 @@ void Draw( const PixieCamera &cam, Timeline &timeline )
 // キーボードショートカット操作
 void updateShortcut(PixieCamera& camera)
 {
-	float speed = 1.01f;
-	if (KeyLShift.pressed()) speed *= 5;                    //Shiftで5倍速
+	float speed = camera.getBasisSpeed()*5;
+	if (KeyLShift.pressed()) speed *= 10 ;                    //Shiftで5倍速
 
 	if (KeyW.pressed()) camera.dolly(+speed,true);
 	if (KeyA.pressed()) camera.trackX(+speed);
@@ -529,42 +553,62 @@ void updateMouse( const PixieGLTF &model, Float3 &focuspos, Float4 &eyepos )
     Float2 delta = Cursor::DeltaF();
     Float3 vector = eyepos.xyz() - focuspos;
     Float2 point2D = Cursor::PosF();
-
-    if ( KeyLControl.pressed() || MouseM.pressed() ) //中ボタンウィール：拡縮
+	float speed = 1;
+	Float3 distance ;
+    if ( KeyLControl.down() || MouseM.down() )                            //中ボタンドラッグ：回転
     {
-        cameraGUI.dolly( (float)Mouse::Wheel() );
+        const Ray mouseRay = cameraGUI.screenToRay(Cursor::PosF());
+        if (const auto depth = mouseRay.intersects( model.ob ))
+        {
+		    point3D = mouseRay.point_at(*depth);    //ポイントした3D座標を基点
+			distance = point3D - cameraGUI.getEyePosition();
+
+			Float3 identity = distance.normalized();
+			speed = distance.length()/identity.length() /100;                    
+		}
     }
+
+	if ( KeyLControl.pressed() || MouseM.pressed() ) //中ボタンウィール：拡縮
+    {
+		Float3 eyepos = cameraGUI.getEyePosition();
+		bool rev = cameraGUI.dolly((float)Mouse::Wheel() * speed / 10);
+		if (rev)
+		{
+			rev = cameraGUI.setEyePosition( eyepos ).dolly((float)Mouse::Wheel() * speed / 100);
+			if (rev)
+			{
+				rev = cameraGUI.setEyePosition( eyepos ).dolly((float)Mouse::Wheel() * speed / 1000);
+				if (rev) cameraGUI.setEyePosition(eyepos);
+			}
+		}
+	}
 
     if ( MouseR.pressed() )                         //右ボタンドラッグ：平行移動
     {
-        cameraGUI.trackX(delta.x/10);
-        cameraGUI.craneY(delta.y/10);
-		LOG_INFO(U"CAM_POS:{}"_fmt(cameraGUI.getEyePosition()));
+        cameraGUI.trackX(delta.x * speed /100);
+        cameraGUI.craneY(delta.y * speed /100);
+//		LOG_INFO(U"CAM_POS:{}"_fmt(cameraGUI.getEyePosition()));
     }
 
 	updateShortcut( cameraGUI );
 	updateShortcut( cameraCUI );
 	cameraGUI.setUpDirection(Float3{0,1,0}).setView();	//カメラをGraphic3Dのビューに反映
 
-    if ( MouseM.down() )                            //中ボタンドラッグ：回転
-    {
-        const Ray mouseRay = cameraGUI.screenToRay(Cursor::PosF());
-        if (const auto depth = mouseRay.intersects( model.ob ))
-        {
-		    point3D = mouseRay.point_at(*depth);    //ポイントした3D座標を基点
-        }
-    }
 
     Mat4x4 mrot=Mat4x4::Identity();
     if ( MouseM.pressed() )
     {
-        float speed = 1;
+
         Float4 ve = {0,0,0,0};  // 視点移動量
         Float3 vf = {0,0,0};    // 注視点移動量
-        if (KeyLShift.pressed()) { speed = 5; ve *= speed; vf *= speed; }           //Shiftで5倍速
-
-        cameraGUI.arcballX(delta.x/100);
-        cameraGUI.arcballY(delta.y/100);
+        if (KeyLShift.pressed())
+		{
+			speed =5;
+			ve *= speed;
+			vf *= speed;
+		}           //Shiftで5倍速
+        cameraGUI.arcballX(delta.x * speed /100);
+        cameraGUI.arcballY(delta.y * speed /100);
         cameraGUI.setUpDirection(Float3{0,1,0}).setView();
     }
 
@@ -923,11 +967,6 @@ void updatedrawMarker( Timeline& timeline )
 // 6:困眉       14:悲眉     22:お口
 // 7:点目       15:閉目(上) 23:
 
-// 瞬きは、13:閉目(中)
-// 喋りは、16～20
-// 12:閉歯は他と開口と合成して使う
-// 眉と目は左右独立が必要
-// 髪の毛もモーフィングにしようか。。
 
 void Main()
 {
@@ -988,13 +1027,15 @@ void Main()
 		Graphics3D::SetCameraTransform(cameraGUI.getViewProj(), cameraGUI.getEyePosition());
 		Graphics3D::SetGlobalAmbientColor(ColorF{1.2});
 		Graphics3D::SetSunColor(ColorF{ 0.15 });
+//		Graphics3D::SetGlobalAmbientColor(ColorF{0.8});
+//		Graphics3D::SetSunColor(ColorF{ 0.15 });
 
 		Update(guiTimeline);
 		updateMouse( meshGnd, focusPosGUI, eyePosGUI );
 
 		Draw( cameraGUI, guiTimeline );							//通常の描画
 
-#define ENABLE_VTUBER
+//#define ENABLE_VTUBER
 #ifdef ENABLE_VTUBER
 		//VRM描画にカメラ指定
 		Graphics3D::SetCameraTransform(cameraVRM.getViewProj(), cameraVRM.getEyePosition());
@@ -1064,7 +1105,7 @@ void Main()
 				const ScopedRenderTarget3D rt{ renderTextureCUI };	// 描画対象をRTに変更
 
 				static float i = 0.0;
-				meshCUI.drawString(U"円:ABCDE", 1000, 5, ColorF{ 1 }, 0, 5);									// ビルボードフレーム描画
+				meshFont.drawString(U"円:ABCDE", 1000, 5, ColorF{ 1 }, 0, 5);									// ビルボードフレーム描画
 //				i = i + 0.05;
 //				if (i >= 26.0) i = 0.0;
 

@@ -332,10 +332,23 @@ namespace s3d
 			Line(out[0].xy(), out[1].xy()).draw(thickness, color);
 		}
 
-		void dolly( float forwardback )
+		float getBasisSpeed()
 		{
-			Float3 dir = (m_focusPosition - m_eyePosition).normalized();
-			m_eyePosition += forwardback * dir;
+			Float3 distance = m_focusPosition - m_eyePosition;
+			Float3 identity = distance.normalized();
+			return distance.length()/identity.length() /1000;                    
+		}
+
+		bool dolly( float forwardback, bool movefocus = false )
+		{
+			Float3 dirB = (m_focusPosition - m_eyePosition).normalized();
+			m_eyePosition += forwardback * dirB;
+			if( movefocus ) m_focusPosition += forwardback * dirB;
+
+			Float3 dirA = (m_focusPosition - m_eyePosition);
+			return ( Math::Sign(dirA.x) != Math::Sign(dirB.x) &&
+					 Math::Sign(dirA.y) != Math::Sign(dirB.y) &&
+					 Math::Sign(dirA.z) != Math::Sign(dirB.z) );
 		}
 
 		void panX( float leftright )

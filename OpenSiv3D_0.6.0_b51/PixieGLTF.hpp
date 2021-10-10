@@ -28,7 +28,14 @@ using Word4 = Vector4D<uint16>;
 constexpr auto USRCOLOR_NOTUSE = 0;
 constexpr auto USRCOLOR_OFFSET = -1;
 constexpr auto USRCOLOR = -2;
-constexpr auto NOTUSE = (-1);
+//constexpr auto NOTUSE = (-1);
+
+enum MODELTYPE { MODELNOA, MODELANI, MODELVRM };
+
+enum USE { NOTUSE = -1, UNKNOWN=0,
+		   USE_MORPH =1, NOTUSE_MORPH,
+		   USE_DEBUG, NOTUSE_DEBUG };
+
  
 struct Channel
 {
@@ -63,7 +70,7 @@ struct NodeParam	//ノード制御パラメータリスト旧extensions
 	Mat4x4 matLocal;		// ローカル座標変換行列。原点に対するノードの姿勢に関する
 	Mat4x4 matWorld;		// ワールド座標変換行列。最終頂点に適用
 	Float3 posePos{0,0,0};	// ローカル座標変換(移動量)この３つはglTFの基本姿勢から取得して
-	Float4 poseRot{0,0,0,0};	// ローカル座標変換(回転量)アニメーションの相対変化量を適用して
+	Float4 poseRot{0,0,0,0};// ローカル座標変換(回転量)アニメーションの相対変化量を適用して
 	Float3 poseSca{1,1,1};	// ローカル座標変換(拡縮量)matLocalを算出
 	Mat4x4 matModify;		// VRMモードのローカル座標変換行列。ローカル座標変換行列に適用する。
 	Float3 modPos{0,0,0};	// VRMモードのローカル座標変換(移動量)この３つは外部から姿勢操作
@@ -115,12 +122,12 @@ struct AnimeModel
 
 struct NoAModel
 {
-    Array<String>           meshName;   // 名称
-    Array<ColorF>           meshColors; // 頂点色データ
-    Array<Texture>          meshTexs;   // テクスチャデータ
-    Array<MeshData>			MeshDatas;	// メッシュデータ(定義)
-    Array<DynamicMesh>		Meshes;		// メッシュ(実行時)※Mesh(モーフ無)/DynamicMesh(モーフ有)の選択が必要
-    Array<int32>            useTex;     // テクスチャ頂点色識別子
+    Array<String>           meshName;		// 名称
+    Array<ColorF>           meshColors;		// 頂点色データ
+    Array<Texture>          meshTexs;		// テクスチャデータ
+    Array<MeshData>			MeshDatas;		// メッシュデータ(定義)
+    Array<DynamicMesh>		Meshes;			// メッシュ(実行時)※Mesh(モーフ無)/DynamicMesh(モーフ有)の選択が必要
+    Array<int32>            useTex;			// テクスチャ頂点色識別子
 
     Array<Mat4x4>           morphMatBuffers;// モーフ対象の姿勢制御行列
     MorphMesh               morphMesh;
@@ -140,11 +147,7 @@ struct VRMModel
     MorphMesh               morphMesh;
 };
 
-
-enum MODELTYPE { MODELNOA, MODELANI, MODELVRM };
-enum USE { USE_MORPH=1, NOTUSE_MORPH,
-		   USE_DEBUG, NOTUSE_DEBUG };
-
+#define DISPLACEFUNC void (*displaceFunc)( Array<Vertex3D> &vertices )
 class PixieGLTF
 {
 private:
@@ -153,14 +156,18 @@ private:
 	VRMModel        vrmModel;
 	bool			register1st = false;
 
-	Array<NodeParam>		nodeParams;//NOA/VRM用。ANIは自動変数（とするとアニメは外部ボーン操作ができない）
+	Array<NodeParam>	nodeParams;//NOA/VRM用。ANIは自動変数（とするとアニメは外部ボーン操作ができない）
+	DISPLACEFUNC = nullptr;
 public:
-    tinygltf::Model gltfModel;
+
+	tinygltf::Model gltfModel;
 	Array<MorphTargetInfo>	morphTargetInfo ;
 
-	bool					obbDebug = false;
-	Float3                  obbSize{1,1,1};  // モデルのサイズ：モデルのサイズをローカル変換してOBBに反映
-    Float3                  obbCenter{0,0,0};// 原点へのオフセット
+	USE				obbDebug = NOTUSE;
+	USE				effectDisplace = NOTUSE;
+
+	Float3           obbSize{1,1,1};  // モデルのサイズ：モデルのサイズをローカル変換してOBBに反映
+    Float3           obbCenter{0,0,0};// 原点へのオフセット
 
     MODELTYPE modelType;
     String textFile = U"";
@@ -204,7 +211,9 @@ public:
         morphID = morph;
     }
 
-    void initModel( MODELTYPE modeltype, USE morph=NOTUSE_MORPH, USE debug=NOTUSE_DEBUG, uint32 cycleframe = 60, int32 animeid=0)
+    void initModel( MODELTYPE modeltype, USE morph=NOTUSE_MORPH,
+		                                 DISPLACEFUNC = nullptr,
+										 USE debug=NOTUSE_DEBUG, uint32 cycleframe = 60, int32 animeid=0)
     {
         //指定されたglTFファイルを取得
         std::string err, warn;
@@ -218,25 +227,24 @@ public:
 		if (result && modeltype == MODELNOA)
 		{
 			gltfSetupNOA();
-			obbDebug = (debug == USE_DEBUG) ;
+			obbDebug = debug ;
 		}
 
 		else if (result && modeltype == MODELANI)
 		{
 			gltfSetupANI(MODELANI, aniModel, gltfModel, cycleframe, animeid);
-			obbDebug = (debug == USE_DEBUG) ;
+			obbDebug = debug ;
 		}
 
 		else if (result && modeltype == MODELVRM)
 		{
 			gltfSetupVRM();
-			obbDebug = (debug == USE_DEBUG) ;
+			obbDebug = debug ;
 		}
 
-		if ( morph == NOTUSE_MORPH )	//モーフィングなし
-		{
-			morphTargetInfo.clear();
-		}
+		if ( morph == NOTUSE_MORPH ) morphTargetInfo.clear();//モーフィングなし
+
+		if( displaceFunc != nullptr ) this->displaceFunc = displaceFunc ;	//ディスプレイス処理登録
 
 		//初期状態のカメラ、視点、注視点はY軸方向に+10の位置
         camera.setView(lPos, lPos + Float3(+0, +10, +0));
@@ -1079,7 +1087,9 @@ public:
         uint32 morphidx = 0;                     //モーフありメッシュの個数
         uint32 tid = 0;
 
-        __m128 rot = XMQuaternionRotationRollPitchYaw(ToRadians(eRot.x), ToRadians(eRot.y), ToRadians(eRot.z));
+        __m128 rot = XMQuaternionRotationRollPitchYaw(ToRadians(eRot.x),
+			                                          ToRadians(eRot.y),
+			                                          ToRadians(eRot.z));
         Mat4x4 mrot =  Mat4x4(Quaternion(rot)*qRot);
 
         Float3 tra = lPos + rPos;
@@ -1090,9 +1100,10 @@ public:
 
 		for (uint32 i = 0; i < noa.Meshes.size(); i++)
         {
-#if 1
             const Array<Array<Vertex3D>>& shapebuf = noa.morphMesh.ShapeBuffers;
 			const int32 NMORPH = shapebuf.size();
+
+			//モーフ
 			if ( morphTargetInfo.size() )  //モーフあり
             {
                 Array<Vertex3D> morphmv = noa.morphMesh.BasisBuffers[morphidx]; //元メッシュのコピーを作業用で確保
@@ -1133,10 +1144,18 @@ public:
                     morphmv[ii].tex = noa.MeshDatas[i].vertices[ii].tex;
                 }
 
-				noa.Meshes[i].fill(morphmv);				//頂点座標を再計算後にすげ替え
+				noa.Meshes[i].fill(morphmv);				//頂点座標を再計算後に置換
                 morphidx++;
-            }
-#endif
+			}
+
+			//変位エフェクト
+			if ( displaceFunc != nullptr )
+			{
+				Array<Vertex3D> effectmv = noa.MeshDatas[i].vertices; //元メッシュのコピーを作業用で確保
+				(*displaceFunc)( effectmv );
+				noa.Meshes[i].fill( effectmv );				//頂点座標を再計算後に置換
+			}
+
 			if (istart == NOTUSE)	//部分描画なし
 			{
 				if (noa.useTex[i])	//テクスチャ色
@@ -1168,7 +1187,7 @@ public:
             }
 		}
 
-		if (obbDebug) ob.draw(ColorF(0,0,1, 0.1) );
+		if ( obbDebug == USE_DEBUG ) ob.draw(ColorF(0,0,1, 0.1) );
     }
 
 	void gltfSetupANI( const MODELTYPE& modeltype, AnimeModel& animodel,
@@ -1992,7 +2011,7 @@ int32 th = omp_get_thread_num();
         }
 
         obb.setPos( anime.Frames[cf].obbCenter*lSca ).setSize( anime.Frames[cf].obbSize ).scaled(lSca).movedBy( lPos ) ;
-		if (obbDebug) obb.draw( matVP, ColorF(0,0,1,0.1) );
+		if (obbDebug == USE_DEBUG ) obb.draw( matVP, ColorF(0,0,1,0.1) );
 
     }
 
@@ -2084,7 +2103,7 @@ int32 th = omp_get_thread_num();
 
 		else if (text.substr(0, 1) == U"円")
 		{
-			for (int32 i = start; i < len; i++)
+			for (int32 i = start; i <(len+1); i++)
 			{
 				uint8 ascii = text.substr(i, 1).narrow().c_str()[0];
 				const uint8& code = CODEMAP[ascii];
@@ -2092,9 +2111,10 @@ int32 th = omp_get_thread_num();
 				if ( ascii == ' ') continue;
 
 				Quaternion q0001 = Quaternion::Identity();
-				Quaternion r = q0001.RollPitchYaw(ToRadians(0),ToRadians(i * kerning), ToRadians(0) );//向き
-				Float3 tt = r * Vec3(radius, 0, 0);                                      //座標
-				Mat4x4 mat = Mat4x4::Identity().rotated(r.RollPitchYaw(ToRadians(-90),ToRadians(90),ToRadians(-90))).scaled(lSca).translated(lPos+tt);        
+				Quaternion r = q0001.RollPitchYaw( ToRadians(eRot.x), ToRadians(eRot.y+(i * kerning)), ToRadians(eRot.z) );//向き
+				Float3 tt = r * Vec3(radius, 0, 0);                                      //描画座標　半径ｘ桁数
+				Quaternion r2 = qRot.RollPitchYaw(ToRadians(-90),ToRadians(0),ToRadians(-90));
+				Mat4x4 mat = Mat4x4::Identity().rotated(r2*r).scaled(lSca).translated(lPos+tt);        
 
 				if (isall)
 				{
